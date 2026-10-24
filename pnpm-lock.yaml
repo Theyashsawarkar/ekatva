@@ -47,6 +47,37 @@ importers:
         specifier: 5.0.5
         version: 5.0.5(@types/node@26.6.5)(vite@8.3.5(@types/node@26.6.5))
 
+  packages/protocol:
+    dependencies:
+      "@ekatva/link":
+        specifier: workspace:*
+        version: link:../link
+      "@noble/hashes":
+        specifier: 2.4.0
+        version: 2.4.0
+      "@trpc/client":
+        specifier: 11.19.0
+        version: 11.19.0(@trpc/server@11.19.0(typescript@7.0.2))(typescript@7.0.2)
+      "@trpc/server":
+        specifier: 11.19.0
+        version: 11.19.0(typescript@7.0.2)
+      zod:
+        specifier: 4.6.7
+        version: 4.6.7
+    devDependencies:
+      "@ekatva/config":
+        specifier: workspace:*
+        version: link:../config
+      "@types/node":
+        specifier: 26.6.5
+        version: 26.6.5
+      typescript:
+        specifier: 7.0.2
+        version: 7.0.2
+      vitest:
+        specifier: 5.0.5
+        version: 5.0.5(@types/node@26.6.5)(vite@8.3.5(@types/node@26.6.5))
+
 packages:
   "@biomejs/biome@2.6.3":
     resolution:
@@ -332,6 +363,25 @@ packages:
       {
         integrity: sha512-2j9bGt5Jh8hj+vPtgzPtl72j0yRxHAyumoo6TNfAjsLB04UtpSvPbPcDcBMxz7n+9CYB0c1GxQFxYRg2jimqGw==,
       }
+
+  "@trpc/client@11.19.0":
+    resolution:
+      {
+        integrity: sha512-0MKkPq6MejsKB5Opca1Rl22KVIaqo2+A1EiXyZ8EGUsl9TLrPdpGn+Usux20TZKFwnSC2+wI/WilqNJaP4ODfw==,
+      }
+    hasBin: true
+    peerDependencies:
+      "@trpc/server": 11.19.0
+      typescript: ">=5.7.2"
+
+  "@trpc/server@11.19.0":
+    resolution:
+      {
+        integrity: sha512-7C1goiDurz82yFKtZUbEzjXd0Rg/jyisaIZQhdvus+1l7E6mwcEYZXjZ1US/HF8kOyz1LERL8UN3bcboJtjcyQ==,
+      }
+    hasBin: true
+    peerDependencies:
+      typescript: ">=5.7.2"
 
   "@turbo/darwin-64@2.11.10":
     resolution:
@@ -1144,6 +1194,12 @@ packages:
     engines: { node: ">=20.11" }
     hasBin: true
 
+  zod@4.6.7:
+    resolution:
+      {
+        integrity: sha512-g8W2D2kU6a8untc053fX1uVBKzM7yqAxW/3zwk83+6RyF2+SKOuV+c0wBDhUwzV1PaGapmZH+rmcUzPf+3CGwg==,
+      }
+
 snapshots:
   "@biomejs/biome@2.6.3":
     optionalDependencies:
@@ -1253,6 +1309,15 @@ snapshots:
     optional: true
 
   "@rolldown/pluginutils@1.0.1": {}
+
+  "@trpc/client@11.19.0(@trpc/server@11.19.0(typescript@7.0.2))(typescript@7.0.2)":
+    dependencies:
+      "@trpc/server": 11.19.0(typescript@7.0.2)
+      typescript: 7.0.2
+
+  "@trpc/server@11.19.0(typescript@7.0.2)":
+    dependencies:
+      typescript: 7.0.2
 
   "@turbo/darwin-64@2.11.10":
     optional: true
@@ -1675,3 +1740,5 @@ snapshots:
   which-runtime@1.4.0: {}
 
   why-is-node-running@3.2.1: {}
+
+  zod@4.6.7: {}

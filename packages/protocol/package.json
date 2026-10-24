@@ -1,0 +1,31 @@
+{
+  "name": "@ekatva/protocol",
+  "version": "0.0.0",
+  "private": true,
+  "description": "The contract: capabilities, tRPC routers' types and zod schemas, and tRPC over an ekatva channel.",
+  "type": "module",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "default": "./dist/index.js"
+    }
+  },
+  "scripts": {
+    "build": "tsc -p tsconfig.json",
+    "typecheck": "tsc -p tsconfig.json --noEmit",
+    "test": "vitest run"
+  },
+  "dependencies": {
+    "@ekatva/link": "workspace:*",
+    "@trpc/client": "11.19.0",
+    "@trpc/server": "11.19.0",
+    "zod": "4.6.7",
+    "@noble/hashes": "2.4.0"
+  },
+  "devDependencies": {
+    "@ekatva/config": "workspace:*",
+    "typescript": "7.0.2",
+    "vitest": "5.0.5",
+    "@types/node": "26.6.5"
+  }
+}

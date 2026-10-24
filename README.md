@@ -62,8 +62,11 @@ anything but ciphertext.
 - **Media.** [nāda](https://github.com/Theyashsawarkar/nada) and
   [drishya](https://github.com/Theyashsawarkar/drishya) (or any MPRIS
   player): play, seek, queue, search; volume and brightness.
-- **Files and clipboard.** Send files both ways, browse folders, one
-  clipboard.
+- **All your files.** Browse, open, create, edit, rename, move, copy and
+  delete anything in your home folder from the phone. Every change can be
+  undone. Private places (`~/.ssh`, `~/.gnupg`, keyrings) need a separate,
+  explicit grant.
+- **Clipboard.** One clipboard across both.
 - **At a glance.** Battery, CPU, temperature, what's playing, what's waiting.
 
 ### From the laptop, on the phone
@@ -74,7 +77,9 @@ anything but ciphertext.
   actions; dismiss on one, gone on both.
 - **Lock the phone**, ring it, find it.
 - **Caffeine, the other way.** Keep the phone's screen on from the laptop.
-- **Battery and signal**, files, clipboard.
+- **The phone's files.** The same browse-and-edit, undoable, on the phone's
+  storage.
+- **Battery and signal**, clipboard.
 
 ### Both ways
 
@@ -87,6 +92,8 @@ anything but ciphertext.
 - **Locked down.** The app opens only with your fingerprint and a strong
   password. Risky actions (root, typing, the screen) ask for the fingerprint
   again. What a phone may do is chosen per capability on the laptop.
+- **Every action logged, everything undoable.** See
+  [The action log](#the-action-log).
 - **Built to grow.** Every feature is a *capability*: one module on each
   side behind one typed contract. Adding one doesn't touch the others; see
   [Adding a feature](#adding-a-feature).
@@ -138,6 +145,34 @@ anything but ciphertext.
 4. Each side stores the other's public key. Nothing reusable was ever
    shown on screen: a photo of the QR is worthless a minute later.
 
+## The action log
+
+Every action either device performs, whoever asked for it, is written to an
+**action log**, and every action that can be reversed carries what it
+takes to reverse it.
+
+- **What's in an entry**: when, on which device, who asked (which phone, or
+  you at the keyboard), what (`files.remove ~/notes/todo.md`), whether it
+  worked, and how to undo it.
+- **Kept on both devices.** Each device keeps its own log and a mirror of
+  the other's, synced over the link. On the laptop it lives in
+  `~/.local/state/ekatva/` (readable only by you); on the phone in the
+  app's private storage, encrypted with a keystore key.
+- **Tamper-evident.** The log is a hash chain: each entry includes the hash
+  of the one before, so changing, removing or reordering an entry breaks
+  the chain, and the mirror on the other device no longer matches.
+- **No secrets.** Passwords and tokens are replaced by `[redacted]`; file
+  contents, typed text and the clipboard by their length.
+- **Undo.** Deleting or overwriting a file first moves the old version to
+  an undo store (kept 30 days or up to 5 GB, both configurable). A rename
+  remembers the old name, a volume change the old volume, caffeine its
+  old level. `ekatva undo 42`, or one tap on the phone, puts it back. An
+  undo is logged too, and can itself be undone. What can't be reversed
+  (a call placed, an SMS sent, an answer given to Claude) is logged as
+  such.
+- **Reads are logged too** where they matter: opening a file, reading the
+  clipboard, reading messages. Polling the battery isn't.
+
 ## Security
 
 ekatva can type on your laptop and run root commands, so security is the
@@ -149,9 +184,14 @@ design, not a feature.
 | photographs the QR | The token works once, for two minutes, and pairing needs matching emoji confirmed on the laptop. |
 | steals the phone | The app opens only with fingerprint and its own password; risky actions ask again; unpairing on the laptop revokes it at once. |
 | runs the tunnel or the Wi-Fi | Sees ciphertext and sizes only: encryption is end to end. |
+| deletes or changes your files through the phone | Every change is in the action log on both devices and can be undone; the old version is in the undo store. |
+| edits the log to hide it | The hash chain breaks, and the other device's mirror disagrees. |
 | gets in through a bug | Capabilities are checked on the laptop for every call; root still goes through anumati or polkit, which show exactly what runs; everything is logged to the journal. |
 
-- **Keys**: X25519 (libsodium). The phone's private key is sealed by the
+- **Keys**: X25519, ChaCha20-Poly1305 and BLAKE2b from the audited
+  [@noble](https://paulmillr.com/noble/) libraries, the same code on both
+  devices; checked byte for byte against an independent Noise
+  implementation in the tests. The phone's private key is sealed by the
   Android keystore; the laptop's lives in the desktop keyring.
 - **No passwords on the wire**, except your sudo password when *you* choose
   to type it on the phone; it goes end to end into the prompt that asked,
@@ -209,7 +249,8 @@ walks through one end to end.
 | Part | State |
 |---|---|
 | Design | done |
-| Monorepo, protocol, link (Noise, pairing) | in progress |
+| Link: Noise, encrypted channel, pairing, emoji | done, tested |
+| Protocol: capabilities, tRPC both ways, action log, undo | done, tested |
 | Daemon: agents, caffeine, media, desktop | planned |
 | Phone app | planned |
 | Calls, SMS, notifications | planned |
@@ -219,8 +260,9 @@ walks through one end to end.
 ## Roadmap
 
 1. **Link and agents**: pairing, LAN and tunnel, agent sessions (answer,
-   reply, new session), caffeine and high caffeine, media, files,
-   clipboard, battery, ring and lock.
+   reply, new session), caffeine and high caffeine, files both ways with
+   undo, the action log on both devices, media, clipboard, battery, ring
+   and lock.
 2. **Phone as a phone**: calls, SMS, notifications; remote control with
    the live screen.
 3. **Deeper**: root approvals with the password from the phone, the phone's
