@@ -1,0 +1,30 @@
+{
+  "name": "@ekatva/link",
+  "version": "0.0.0",
+  "private": true,
+  "description": "Noise XX over any message transport, pairing, the QR payload and channel multiplexing.",
+  "type": "module",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "default": "./dist/index.js"
+    }
+  },
+  "scripts": {
+    "build": "tsc -p tsconfig.json",
+    "typecheck": "tsc -p tsconfig.json --noEmit",
+    "test": "vitest run"
+  },
+  "dependencies": {
+    "@noble/ciphers": "2.4.0",
+    "@noble/curves": "2.4.0",
+    "@noble/hashes": "2.4.0"
+  },
+  "devDependencies": {
+    "@ekatva/config": "workspace:*",
+    "@types/node": "26.6.5",
+    "noise-handshake": "4.2.0",
+    "typescript": "7.0.2",
+    "vitest": "5.0.5"
+  }
+}

@@ -1,0 +1,25 @@
+{
+  "name": "ekatva",
+  "private": true,
+  "version": "0.0.0",
+  "description": "Your phone and your laptop as one device.",
+  "license": "MIT",
+  "packageManager": "pnpm@10.12.1",
+  "engines": {
+    "node": ">=22"
+  },
+  "type": "module",
+  "scripts": {
+    "build": "turbo run build",
+    "dev": "turbo run dev --filter=@ekatva/daemon --filter=@ekatva/desktop",
+    "test": "turbo run test",
+    "typecheck": "turbo run typecheck",
+    "lint": "biome check .",
+    "format": "biome format --write ."
+  },
+  "devDependencies": {
+    "@biomejs/biome": "2.6.3",
+    "turbo": "2.11.10",
+    "typescript": "7.0.2"
+  }
+}
