@@ -258,9 +258,9 @@ walks through one end to end.
 | Protocol: capabilities, tRPC both ways, action log, undo | done, tested |
 | Daemon: pairing, files with undo, caffeine, agents, the log, CLI | done, tested |
 | Daemon: tunnel and rendezvous, media, screen and input, root | planned |
-| Desktop window (Electron) | planned |
+| Desktop window (Electron) | done: phones, pairing, the logs, caffeine, the phone |
 | Website and documentation | done: [theyashsawarkar.github.io/ekatva](https://theyashsawarkar.github.io/ekatva/) |
-| Phone app | planned |
+| Phone app | core done and tested against the daemon; screens done; first device build next |
 | Calls, SMS, notifications | planned |
 | Root approvals from the phone | planned |
 | Replacing KDE Connect in Vayu | planned |

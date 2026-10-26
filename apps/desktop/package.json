@@ -1,0 +1,36 @@
+{
+  "name": "@ekatva/desktop",
+  "version": "0.0.0",
+  "private": true,
+  "description": "The laptop's window: pairing, devices, the logs, caffeine, the phone (Electron, a client of the daemon).",
+  "type": "module",
+  "main": "out/main/index.js",
+  "scripts": {
+    "dev": "electron-vite dev",
+    "build": "electron-vite build",
+    "start": "electron-vite preview",
+    "typecheck": "tsc --noEmit -p tsconfig.json"
+  },
+  "dependencies": {
+    "@ekatva/protocol": "workspace:*",
+    "@trpc/client": "11.19.0",
+    "@trpc/server": "11.19.0",
+    "qrcode": "1.5.4",
+    "react": "19.3.1",
+    "react-dom": "19.3.1",
+    "ws": "8.22.0"
+  },
+  "devDependencies": {
+    "@ekatva/config": "workspace:*",
+    "@types/node": "26.6.5",
+    "@types/qrcode": "1.5.6",
+    "@types/react": "~19.3.0",
+    "@types/react-dom": "~19.3.0",
+    "@types/ws": "8.18.2",
+    "@vitejs/plugin-react": "6.1.2",
+    "electron": "44.9.3",
+    "electron-vite": "6.0.0",
+    "typescript": "7.0.2",
+    "vite": "8.3.5"
+  }
+}

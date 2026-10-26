@@ -333,3 +333,13 @@ describe("mirror ordering", () => {
     expect(await mirror.head()).toBe(4);
   });
 });
+
+describe("errors", () => {
+  it("never carry a stack trace to the other device", async () => {
+    const { client } = await setup(ALL);
+    const err = await client.files.read.query({ path: "/nope" }).catch((e) => e);
+    expect(err.data.code).toBe("NOT_FOUND");
+    expect(err.data.stack).toBeUndefined();
+    expect(JSON.stringify(err.shape)).not.toMatch(/at \w+ \(/);
+  });
+});

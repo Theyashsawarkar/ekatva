@@ -32,6 +32,7 @@ const HELP = `ekatva ${VERSION}: your phone and your laptop as one device
   ekatva caffeine [off|on|high] [--for MIN]
   ekatva status [--json|--waybar]
   ekatva agents                   AI agent sessions in tmux
+  ekatva window [TAB]             open the desktop window (phones, log, caffeine, phone)
   ekatva daemon                   run the service (systemd does this)
 
 Presets: ${Object.keys(PRESETS).join(", ")}
@@ -117,6 +118,34 @@ async function pair(api: ReturnType<typeof client>["api"], preset: string): Prom
   );
 }
 
+/**
+ * Opens the Electron window, detached. GTK 4 preloaded into the environment
+ * (gtk4-layer-shell, for Vyom's panels) would crash Electron's GTK 3, so
+ * it's taken out for this child.
+ */
+async function openWindow(tab: string | undefined): Promise<void> {
+  const { spawn } = await import("node:child_process");
+  const { dirname, join } = await import("node:path");
+  const { fileURLToPath } = await import("node:url");
+  const desktop =
+    process.env.EKATVA_DESKTOP ?? join(dirname(fileURLToPath(import.meta.url)), "../../desktop");
+  const electron = join(desktop, "node_modules/electron/dist/electron");
+  if (!existsSync(electron) || !existsSync(join(desktop, "out/main/index.js")))
+    fail(`the desktop window isn't built (${desktop}); run pnpm build`);
+  const env = { ...process.env };
+  const preload = (env.LD_PRELOAD ?? "")
+    .split(/[: ]/)
+    .filter((p) => p && !p.includes("gtk4-layer-shell"));
+  if (preload.length) env.LD_PRELOAD = preload.join(":");
+  else delete env.LD_PRELOAD;
+  const args = [
+    join(desktop, "out/main/index.js"),
+    "--ozone-platform-hint=auto",
+    ...(tab ? [`--tab=${tab}`] : []),
+  ];
+  spawn(electron, args, { env, detached: true, stdio: "ignore" }).unref();
+}
+
 async function main(argv: string[]): Promise<void> {
   const [cmd, ...rest] = argv;
   if (!cmd || cmd === "help" || cmd === "--help" || cmd === "-h") {
@@ -125,6 +154,10 @@ async function main(argv: string[]): Promise<void> {
   }
   if (cmd === "--version") {
     process.stdout.write(`${VERSION}\n`);
+    return;
+  }
+  if (cmd === "window") {
+    await openWindow(rest[0]);
     return;
   }
   if (cmd === "daemon") {

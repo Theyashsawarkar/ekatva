@@ -34,10 +34,12 @@ export interface BaseContext {
 }
 
 export function createApi<Ctx extends BaseContext>() {
-  const t = initTRPC
-    .context<Ctx>()
-    .meta<Meta>()
-    .create({ isServer: true, allowOutsideOfServer: true });
+  const t = initTRPC.context<Ctx>().meta<Meta>().create({
+    isServer: true,
+    allowOutsideOfServer: true,
+    // Never send stack traces to the other device.
+    isDev: false,
+  });
 
   const guarded = t.procedure.use(async ({ ctx, meta, path, type, getRawInput, next }) => {
     if (!meta?.cap) {

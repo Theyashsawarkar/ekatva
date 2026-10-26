@@ -85,7 +85,7 @@ interface Peer {
   key: string;
   channel: Channel;
   phone: TRPCClient<PhoneRouter>;
-  close: () => void;
+  close: (reason?: string) => void;
   via: "lan" | "tunnel";
 }
 
@@ -221,7 +221,7 @@ export class Daemon {
 
   async stop(): Promise<void> {
     for (const t of this.timers) clearInterval(t);
-    for (const p of this.peers.values()) p.close();
+    for (const p of this.peers.values()) p.close("the laptop's service stopped");
     this.peers.clear();
     for (const p of this.pendings.values()) p.decide({ ok: false, reason: "the laptop stopped" });
     this.bonjour?.destroy();
@@ -394,11 +394,11 @@ export class Daemon {
     });
     const phone = createTRPCClient<PhoneRouter>({ links: [wsLink({ client: wsClient })] });
     let follow: { unsubscribe(): void } | null = null;
-    const close = () => {
+    const close = (reason = "replaced by a new connection") => {
       follow?.unsubscribe();
       stopServing();
       void wsClient.close();
-      if (channel.isOpen) channel.close("replaced");
+      if (channel.isOpen) channel.close(reason);
     };
     const peer: Peer = { key, channel, phone, close, via };
     this.peers.set(key, peer);

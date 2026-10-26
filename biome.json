@@ -51,6 +51,29 @@
           }
         }
       }
+    },
+    {
+      "includes": ["apps/desktop/src/renderer/**"],
+      "linter": {
+        "rules": {
+          "correctness": {
+            "noComponentHookFactories": "off"
+          }
+        }
+      }
+    },
+    {
+      "includes": [
+        "apps/desktop/src/renderer/src/hooks.ts",
+        "apps/desktop/src/renderer/src/keys.ts"
+      ],
+      "linter": {
+        "rules": {
+          "correctness": {
+            "useExhaustiveDependencies": "off"
+          }
+        }
+      }
     }
   ]
 }

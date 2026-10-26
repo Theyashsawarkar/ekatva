@@ -4,6 +4,27 @@ Newest first. Releases are tags (`vX.Y.Z`); every package's `version` moves toge
 
 ## Unreleased
 
+- `@ekatva/desktop`, the laptop's window (Electron 44, React), a client of
+  the daemon: the main process relays a MessagePort to the daemon's local
+  socket, so the renderer stays sandboxed (no Node, a strict CSP) and
+  speaks tRPC with full types.
+  - Phones: paired phones, live; what each may do on the laptop, per
+    capability with its risk, presets; unpair.
+  - Pairing: the QR code with its countdown; a phone's request with its
+    four emoji, confirmed with Enter or refused with x.
+  - Log: this laptop's and each phone's (the copy kept here), the chain's
+    state, undo.
+  - Caffeine: off / on / high, for a while or until turned off.
+  - Phone: its battery and network, ring, lock, keep its screen on, send
+    to its clipboard, browse its files.
+  - Keys everywhere (1–4, j/k, g/G, p, Enter, x, u, o/i/h, r, ?), annotated
+    for Vayu's keybinding search.
+  - `ekatva window [TAB]` opens it, without a GTK 4 preload inherited from
+    the session (it crashes Electron's GTK 3 at start).
+  - Electron 44.9.3, not 45.0.0.
+- Errors sent to the other device no longer include stack traces.
+- The daemon says why it closed a connection (stopped, unpaired, replaced).
+
 - The phone app's screens (Expo Router, rose-pine), bundled for Android:
   - first run sets the app password (with a strength meter) and binds the
     vault to the fingerprint; the password opens it once per start, the
