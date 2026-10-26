@@ -219,7 +219,16 @@ export class Mirror {
     return (await this.store.last())?.seq ?? 0;
   }
 
-  async add(entries: Entry[]): Promise<Problem | null> {
+  private queue: Promise<unknown> = Promise.resolve();
+
+  /** Adds entries in arrival order: concurrent calls wait their turn. */
+  add(entries: Entry[]): Promise<Problem | null> {
+    const run = this.queue.then(() => this.addNow(entries));
+    this.queue = run.catch(() => undefined);
+    return run;
+  }
+
+  private async addNow(entries: Entry[]): Promise<Problem | null> {
     if (!entries.length) return null;
     const last = await this.store.last();
     const first = entries[0] as Entry;
@@ -230,7 +239,7 @@ export class Mirror {
         const mine = await this.store.get(e.seq);
         if (mine && mine.hash !== e.hash) return { seq: e.seq, why: "history was rewritten" };
       }
-      return this.add(entries.filter((e) => e.seq > last.seq));
+      return this.addNow(entries.filter((e) => e.seq > last.seq));
     }
     const p = verify(entries, last);
     if (p) return p;

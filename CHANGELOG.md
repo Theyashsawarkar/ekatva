@@ -4,6 +4,25 @@ Newest first. Releases are tags (`vX.Y.Z`); every package's `version` moves toge
 
 ## Unreleased
 
+- `@ekatva/mobile`, the phone's core (the UI comes next), tested end to end
+  against a real daemon:
+  - the vault: this phone's identity and log key, encrypted with a key
+    derived from the app password (scrypt) and kept in Android's keystore
+    behind the fingerprint, so opening the app needs both; weak and
+    common passwords refused.
+  - the link: pairing from the QR code (LAN addresses, then the tunnel),
+    the four emoji, reconnecting with backoff, and stopping (with a clear
+    message) when the laptop has unpaired the phone.
+  - the phone's API for the laptop, under the phone's own grants: status,
+    ring, keep awake, clipboard, files (inside the shared folders, every
+    change undoable); calls, SMS and locking say they need the native
+    modules until those exist.
+  - the phone's action log, and its verified copy of the laptop's,
+    encrypted at rest line by line.
+- The mirror of the other device's log now takes entries that arrive
+  together in order (it refused all but the first).
+- A socket over the link no longer throws when the link drops mid-send.
+
 - The website and documentation (Astro Starlight, GitHub Pages): what it
   is, install, pairing, every feature, the security model, cryptography and
   threats, adding a capability, development, replacing KDE Connect, the CLI,

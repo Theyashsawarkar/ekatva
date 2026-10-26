@@ -314,3 +314,22 @@ describe("journal", () => {
     for (const [path, p] of Object.entries(procs)) expect(p._def.meta?.cap, path).toBeTruthy();
   });
 });
+
+describe("mirror ordering", () => {
+  it("keeps entries that arrive together, in order", async () => {
+    const theirs = new Journal(new MemoryStore(), "phone");
+    for (const i of [1, 2, 3, 4])
+      await theirs.record({
+        actor: { key: "k", name: "n" },
+        action: "x",
+        summary: `${i}`,
+        input: null,
+        ok: true,
+      });
+    const mirror = new Mirror(new MemoryStore(), "phone");
+    const all = await theirs.since(0);
+    const results = await Promise.all(all.map((e) => mirror.add([e])));
+    expect(results.every((r) => r === null)).toBe(true);
+    expect(await mirror.head()).toBe(4);
+  });
+});

@@ -197,6 +197,11 @@ export function channelWebSocket(channel: Channel, port: number): typeof WebSock
 
     send(data: string): void {
       if (this.readyState !== 1) throw new Error("socket not open");
+      // The link can drop between tRPC's check and its send: close, don't throw.
+      if (!channel.isOpen) {
+        this.shut(1006, "link closed");
+        return;
+      }
       channel.sendText(port, data);
     }
 
