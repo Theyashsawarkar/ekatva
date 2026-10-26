@@ -1,0 +1,7 @@
+{
+  "name": "ekatva-phone",
+  "version": "0.1.0",
+  "private": true,
+  "description": "The Android APIs ekatva's phone app needs that JavaScript can't reach: lock, calls, SMS, notifications, staying connected.",
+  "main": "index.ts"
+}

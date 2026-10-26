@@ -30,6 +30,21 @@ when nobody sits in between. If someone else used your QR first, their
 connection shows different emoji (and your phone's fails, because the token
 is spent). You only confirm what you can see on both screens.
 
+## From anywhere
+
+Pair with `ekatva pair --away` and the QR code also carries a tunnel URL, so
+the phone can pair from another network. After pairing, you don't need to do
+anything: when the phone can't reach the laptop where it last was, it asks the
+pair's **private mailbox** on [ntfy](https://ntfy.sh) "where are you?"; the
+laptop starts a tunnel and answers with its URL; the phone connects.
+
+- The mailbox's topic and key come from the two devices' keys: the ntfy server
+  sees a random topic name and ciphertext. Messages older than 10 minutes are
+  refused.
+- The tunnel (a free Cloudflare quick tunnel by default; or ngrok, or your
+  Tailscale address) only ever carries the end-to-end encrypted link, gets a
+  new URL each time, and stops after 10 idle minutes.
+
 ## What the phone may do
 
 Pairing grants the preset you choose (`everything-but-root` by default). Change

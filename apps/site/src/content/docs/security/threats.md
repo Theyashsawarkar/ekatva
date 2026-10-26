@@ -15,4 +15,7 @@ description: "What could go wrong, and what stops it."
 | tries to grant itself more | ekatva's state (grants, log, keys) is unreachable through files, and `admin` is never grantable to a phone. |
 | edits the log to hide it | The hash chain breaks, and the other device's mirror disagrees. |
 | answers Claude's next question by a late tap | Answers carry the question's hash and only land on that question. |
+| watches the ntfy server | Sees a random topic name and ciphertext; can't read, forge or usefully replay a message (each carries its time, refused after 10 minutes). |
+| finds the tunnel URL from the mailbox | Can't: it's encrypted; and the URL alone only leads to a Noise handshake. |
+| runs as you on the laptop (an agent gone rogue) | Can use ekatva's local socket, as it can read your files: it's yours. Keep the phone's own grants (Settings on the phone) to what you need; everything it does is in both logs. |
 | floods the daemon with huge frames | Frames over 64 KiB are refused by the server; reassembly stops at 16 MB. |

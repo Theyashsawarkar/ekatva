@@ -9,6 +9,11 @@ import { activateKeepAwakeAsync, deactivateKeepAwake } from "expo-keep-awake";
 import * as Network from "expo-network";
 import * as SecureStore from "expo-secure-store";
 import { Vibration } from "react-native";
+import { phone } from "../../modules/ekatva-phone";
+
+/** The native module, when this build has it (a local const narrows in closures). */
+const native = phone;
+
 import type { Fs, FsStat } from "../core/files";
 import type { KV } from "../core/kv";
 import type { Opener } from "../core/link";
@@ -119,6 +124,19 @@ const fs: Fs = {
   },
 };
 
+type Native = NonNullable<typeof phone>;
+const lockOf = (n: Native) => async () => n.lock();
+const callsOf = (n: Native): DeviceApi["calls"] => ({
+  dial: async (num) => n.dial(num),
+  answer: async () => n.answer(),
+  hangUp: async () => n.hangUp(),
+});
+const smsOf = (n: Native): DeviceApi["sms"] => ({
+  threads: async () => n.smsThreads(50),
+  read: async (thread, limit) => n.smsRead(thread, limit),
+  send: async (to, text) => n.smsSend(to, text),
+});
+
 let awake = false;
 const device: DeviceApi = {
   name: Device.deviceName ?? Device.modelName ?? "phone",
@@ -151,6 +169,8 @@ const device: DeviceApi = {
   },
   async ring() {
     Vibration.vibrate([0, 600, 300, 600, 300, 600, 300, 1200]);
+    // Rings even on silent: that's the point of "find my phone".
+    native?.ring(20);
   },
   async keepAwake(on) {
     if (on) await activateKeepAwakeAsync("ekatva");
@@ -162,9 +182,9 @@ const device: DeviceApi = {
   async clipboardSet(text) {
     await Clipboard.setStringAsync(text);
   },
-  lock: null,
-  calls: null,
-  sms: null,
+  lock: native ? lockOf(native) : null,
+  calls: native ? callsOf(native) : null,
+  sms: native ? smsOf(native) : null,
 };
 
 const open: Opener = (url, timeoutMs) =>

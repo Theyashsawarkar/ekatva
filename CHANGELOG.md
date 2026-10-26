@@ -4,6 +4,16 @@ Newest first. Releases are tags (`vX.Y.Z`); every package's `version` moves toge
 
 ## Unreleased
 
+- The phone's native side (`apps/mobile/modules/ekatva-phone`, Kotlin, an
+  Expo module): lock the phone from the laptop (device admin, force-lock
+  only), place, answer and end calls, see incoming ones with the contact's
+  name, read and send SMS and see new ones, mirror notifications (a
+  notification listener), ring as an alarm (sounds on silent), all-files
+  access, and a foreground service that keeps the link up in the
+  background. Each asks for its permission once, from Settings → Phone
+  features; the phone's calls, messages and notifications go to the laptop
+  only if the laptop may receive them.
+
 - From anywhere: when the phone can't reach the laptop where it last was,
   it asks the pair's private mailbox on ntfy ("where are you?"); the
   laptop starts a tunnel (cloudflared quick tunnel by default, ngrok, or

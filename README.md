@@ -262,7 +262,7 @@ walks through one end to end.
 | Desktop window (Electron) | done: phones, pairing, the logs, caffeine, the phone |
 | Website and documentation | done: [theyashsawarkar.github.io/ekatva](https://theyashsawarkar.github.io/ekatva/) |
 | Phone app | core done and tested against the daemon; screens done; first device build next |
-| Calls, SMS, notifications | planned |
+| Calls, SMS, notifications, lock (native module) | built; first device test next |
 | Root approvals from the phone (anumati) | done, tested; polkit (pramana) next |
 | Replacing KDE Connect in Vayu | planned |
 

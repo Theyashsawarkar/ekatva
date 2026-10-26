@@ -22,6 +22,7 @@ import { AppState } from "react-native";
 import type { LinkState } from "../core/link";
 import { Session } from "../core/session";
 import { platform } from "../platform";
+import { usePhoneBridge } from "./bridge";
 
 type Phase = "loading" | "setup" | "password" | "locked" | "ready";
 
@@ -49,6 +50,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
   const [alerts, setAlerts] = useState<string[]>([]);
   const p = useMemo(() => platform((m) => setAlerts((a) => [...a, m])), []);
   const backgroundAt = useRef<number | null>(null);
+  usePhoneBridge(session);
 
   useEffect(() => {
     void Session.isSetUp(p).then((yes) => setPhase(yes ? "password" : "setup"));

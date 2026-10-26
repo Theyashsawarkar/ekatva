@@ -1,12 +1,12 @@
 import { CAPABILITIES, type Capability } from "@ekatva/protocol";
 import Constants from "expo-constants";
-import * as Linking from "expo-linking";
 import { router } from "expo-router";
 import { useState } from "react";
 import { Alert, Switch, View } from "react-native";
 import { Vault } from "../../core/vault";
 import { Button, Card, Field, Row, Screen, T } from "../../ui/kit";
 import { LinkChip } from "../../ui/link-chip";
+import { PhoneFeatures } from "../../ui/phone-features";
 import { useApp, useLink } from "../../ui/state";
 import { c } from "../../ui/theme";
 
@@ -106,17 +106,12 @@ export default function Settings() {
           ))}
         </Card>
       ) : null}
+      <PhoneFeatures />
       <Card style={{ padding: 4, gap: 0 }}>
         <Row
           icon="qr-code"
           title={laptop ? "Pair another laptop" : "Pair with a laptop"}
           onPress={() => router.push("/pair")}
-        />
-        <Row
-          icon="folder-open"
-          title="Let the laptop reach all files"
-          detail="Android's “All files access” for ekatva"
-          onPress={() => void Linking.openSettings()}
         />
         {laptop ? <Row icon="unlink" title={`Forget ${laptop.name}`} onPress={forget} /> : null}
       </Card>
