@@ -1,4 +1,5 @@
 import * as fs from "node:fs/promises";
+import { connect as netConnect } from "node:net";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { Daemon, loadConfig } from "@ekatva/daemon";
@@ -220,6 +221,48 @@ describe("phone and laptop, end to end", () => {
     expect(await mirror.head()).toBe(log.at(-1)?.seq);
     // Encrypted at rest: no readable path in the stored lines.
     expect((await p.lines(`log-${daemon.id}`).read()).join()).not.toContain("from-phone");
+  });
+
+  it("answers a root request from the laptop's window, the password never logged", async () => {
+    // A stand-in for anumati's window on the laptop.
+    const win = netConnect(join(root, "ekatva-root.sock"));
+    await new Promise((r) => win.once("connect", r));
+    const got: string[] = [];
+    win.setEncoding("utf8");
+    win.on("data", (d: string) => got.push(...d.split("\n").filter(Boolean)));
+    win.write(
+      `${JSON.stringify({ t: "request", v: 1, via: "anumati", requester: "claude", reason: "install jq", commands: [{ cmd: "pacman -S --noconfirm jq", why: "needed" }] })}\n`,
+    );
+    const client = phone.link.client!;
+    // Not granted by default ("everything but root").
+    await expect(client.root.pending.query()).rejects.toThrow(/may not use "root"/);
+    await local.admin.devices.grant.mutate({
+      key: "Pixel 8",
+      grants: ["status", "files", "journal", "root", "phone.notifications"],
+    });
+    const [r] = await client.root.pending.query();
+    expect(r).toMatchObject({
+      requester: "claude",
+      commands: [{ cmd: "pacman -S --noconfirm jq" }],
+    });
+    await client.root.respond.mutate({
+      id: r!.id,
+      approve: true,
+      password: "s3cret-pass",
+      allow: [0],
+    });
+    for (let i = 0; i < 50 && !got.length; i++) await new Promise((res) => setTimeout(res, 20));
+    expect(JSON.parse(got[0]!)).toEqual({
+      t: "answer",
+      approve: true,
+      allow: [0],
+      password: "s3cret-pass",
+    });
+    win.write(`${JSON.stringify({ t: "done", status: "completed" })}\n`);
+    win.end();
+    const log = await local.admin.log.list.query({ host: "self" });
+    expect(log.at(-1)?.summary).toBe("Approved 1 of 1 root command for claude");
+    expect(JSON.stringify(log)).not.toContain("s3cret-pass");
   });
 
   it("serves the laptop, logging on the phone, mirrored on the laptop", async () => {

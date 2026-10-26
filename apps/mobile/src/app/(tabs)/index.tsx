@@ -20,6 +20,8 @@ export default function Home() {
   const agents = usePoll(() => client?.agents.list.query() ?? null, [client], 2500);
   const laptop = session?.laptops.current();
   const waiting = (agents.data ?? []).filter((a) => a.question);
+  // Root requests: only when this phone may answer them (else quietly nothing).
+  const roots = usePoll(() => client?.root.pending.query().catch(() => []) ?? null, [client], 2000);
 
   if (link.status === "unpaired") {
     return (
@@ -53,6 +55,23 @@ export default function Home() {
         <Card key={a} tone="red">
           <T color={c.red}>{a}</T>
           <Button label="Dismiss" onPress={() => dismissAlert(i)} />
+        </Card>
+      ))}
+      {(roots.data ?? []).map((r) => (
+        <Card key={r.id} tone="red">
+          <T weight="700" color={c.red}>
+            ⚠ Root access · {r.requester}
+          </T>
+          <T color={c.sub}>
+            wants to run {r.commands.length} command{r.commands.length === 1 ? "" : "s"} as root
+            {r.reason ? `: ${r.reason}` : ""}
+          </T>
+          <Button
+            label="Review"
+            kind="danger"
+            icon="shield-checkmark"
+            onPress={() => router.push({ pathname: "/root/[id]", params: { id: r.id } })}
+          />
         </Card>
       ))}
       {waiting.map((a) => (

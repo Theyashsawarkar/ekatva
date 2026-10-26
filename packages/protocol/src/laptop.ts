@@ -79,6 +79,10 @@ export const RootRequest = z.object({
   reason: z.string(),
   commands: z.array(z.object({ cmd: z.string(), why: z.string() })),
   at: z.number(),
+  /** waiting for an answer · checking the password · wrong (try again) */
+  state: z.enum(["waiting", "checking", "wrong"]),
+  /** Wrong passwords so far. */
+  attempts: z.number(),
 });
 export type RootRequest = z.infer<typeof RootRequest>;
 
@@ -142,7 +146,14 @@ export interface LaptopServices {
   files: FileService;
   root: {
     pending(): Promise<RootRequest[]>;
-    respond(id: string, approve: boolean, password: string | null): Promise<Done<null>>;
+    changes(signal: AbortSignal | undefined): AsyncIterable<RootRequest[]>;
+    /** `allow`: which commands (by index) to run; all when null. */
+    respond(
+      id: string,
+      approve: boolean,
+      password: string | null,
+      allow: number[] | null,
+    ): Promise<Done<null>>;
   } | null;
   /** Events the phone reports (its notifications, calls, messages, battery). */
   phoneEvent(from: string, e: PhoneEvent): Promise<void>;
@@ -326,6 +337,9 @@ const rootService = (ctx: LaptopContext) => {
 };
 const root = api.router({
   pending: p.meta({ cap: "root" }).query(({ ctx }) => rootService(ctx).pending()),
+  watch: p
+    .meta({ cap: "root" })
+    .subscription(({ ctx, signal }) => stream(rootService(ctx).changes(signal))),
   respond: p
     .meta({ cap: "root" })
     .input(
@@ -333,10 +347,14 @@ const root = api.router({
         id: z.string(),
         approve: z.boolean(),
         password: z.string().max(1024).nullable().default(null),
+        allow: z.array(z.number().int().min(0)).max(64).nullable().default(null),
       }),
     )
     .mutation(async ({ ctx, input }) =>
-      done(ctx, await rootService(ctx).respond(input.id, input.approve, input.password)),
+      done(
+        ctx,
+        await rootService(ctx).respond(input.id, input.approve, input.password, input.allow),
+      ),
     ),
 });
 

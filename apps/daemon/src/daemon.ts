@@ -7,7 +7,7 @@ import { randomBytes } from "node:crypto";
 import { chmodSync, rmSync } from "node:fs";
 import { createServer, type Server } from "node:http";
 import { networkInterfaces, userInfo } from "node:os";
-import { join } from "node:path";
+import { dirname, join } from "node:path";
 import {
   accept,
   type Candidate,
@@ -56,6 +56,7 @@ import { FileStore } from "./journalFile.js";
 import { AgentsService, type Tmux } from "./services/agents.js";
 import { CaffeineService, type Host } from "./services/caffeine.js";
 import { LaptopFiles } from "./services/files.js";
+import { RootBridge } from "./services/root.js";
 import { SystemService } from "./services/system.js";
 
 const VERSION = "0.1.0";
@@ -68,6 +69,8 @@ export interface DaemonOptions {
   key: KeyPair;
   stateDir: string;
   socketPath: string;
+  /** Where anumati and pramana hand over root requests; default beside socketPath. */
+  rootSocketPath?: string;
   undoDir: string;
   configDir: string;
   /** 0 picks a free port (tests). */
@@ -146,6 +149,7 @@ export class Daemon {
   readonly caffeine: CaffeineService;
   readonly agents: AgentsService;
   readonly system: SystemService;
+  readonly root: RootBridge;
   readonly id: string;
   port = 0;
 
@@ -160,6 +164,10 @@ export class Daemon {
     });
     this.caffeine = new CaffeineService(o.caffeineHost, join(o.stateDir, "caffeine.json"));
     this.agents = new AgentsService(o.tmux, o.config.agents.roots);
+    this.root = new RootBridge(
+      o.rootSocketPath ?? join(dirname(o.socketPath), "ekatva-root.sock"),
+      (m) => this.log(m),
+    );
     this.system = new SystemService(o.config.name, async () => ({
       caffeine: (await this.caffeine.get()).level,
       waiting: (await this.agents.list()).filter((s) => s.state === "waiting" || s.state === "done")
@@ -213,6 +221,7 @@ export class Daemon {
     );
     await this.listen();
     await this.listenLocal();
+    await this.root.listen();
     if (this.o.mdns ?? this.o.config.advertise) await this.advertise();
     this.log(
       `ekatva ${VERSION}: listening on port ${this.port}, ${this.devices.all().length} paired device(s)`,
@@ -233,6 +242,7 @@ export class Daemon {
     await new Promise<void>((r) => (this.localWss ? this.localWss.close(() => r()) : r()));
     await new Promise<void>((r) => (this.local ? this.local.close(() => r()) : r()));
     rmSync(this.o.socketPath, { force: true });
+    await this.root.close();
     for (const s of this.stores) await s.close();
   }
 
@@ -487,7 +497,11 @@ export class Daemon {
         set: (text) => this.system.clipboardSet(text),
       },
       files: this.files,
-      root: null,
+      root: {
+        pending: async () => this.root.list(),
+        changes: (signal) => this.root.changes(signal),
+        respond: (id, approve, password, allow) => this.root.respond(id, approve, password, allow),
+      },
       phoneEvent: async (from, e) =>
         this.system.showPhoneEvent(this.devices.get(from)?.name ?? "phone", e),
       undo: (u) => this.undo(u),

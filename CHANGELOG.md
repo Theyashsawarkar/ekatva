@@ -4,6 +4,16 @@ Newest first. Releases are tags (`vX.Y.Z`); every package's `version` moves toge
 
 ## Unreleased
 
+- Root approvals from the phone. anumati (from v1.3.0) hands its request
+  to the daemon over `ekatva-root.sock` (0600, in your runtime directory);
+  phones with the "root" capability (off by default) see it live, exactly
+  as the window shows it, choose which commands to run, confirm with the
+  fingerprint and type the sudo password, which goes end to end into
+  anumati's window: the same sudo check and runner as typing it there. A
+  wrong password comes back to the phone; answering on either side clears
+  it on both. ekatva never runs anything as root, and the password is
+  redacted from both logs.
+
 - `@ekatva/desktop`, the laptop's window (Electron 44, React), a client of
   the daemon: the main process relays a MessagePort to the daemon's local
   socket, so the renderer stays sandboxed (no Node, a strict CSP) and

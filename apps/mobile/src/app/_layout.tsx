@@ -28,6 +28,10 @@ export default function Root() {
             />
             <Stack.Screen name="agent/[id]" options={{ animation: "slide_from_right" }} />
             <Stack.Screen name="file" options={{ animation: "slide_from_right" }} />
+            <Stack.Screen
+              name="root/[id]"
+              options={{ presentation: "modal", animation: "slide_from_bottom" }}
+            />
           </Stack>
         </AppProvider>
       </SafeAreaProvider>
