@@ -1,4 +1,5 @@
-<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 520 380" fill="none">
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 520 380" fill="none" role="img" aria-label="A laptop showing Claude asking to run pnpm test, and a phone showing the same question with Yes and No">
+  <title>Claude asks on the laptop; you answer on the phone</title>
   <defs>
     <linearGradient id="g" x1="0" y1="0" x2="1" y2="1"><stop offset="0" stop-color="#c4a7e7"/><stop offset="1" stop-color="#9ccfd8"/></linearGradient>
     <linearGradient id="screen" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="#26233a"/><stop offset="1" stop-color="#191724"/></linearGradient>

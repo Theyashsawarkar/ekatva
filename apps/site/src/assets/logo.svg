@@ -1,4 +1,5 @@
-<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64" fill="none">
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64" fill="none" role="img" aria-label="ekatva">
+  <title>ekatva</title>
   <rect x="6" y="14" width="34" height="24" rx="4" stroke="#c4a7e7" stroke-width="4"/>
   <path d="M2 44h42" stroke="#c4a7e7" stroke-width="4" stroke-linecap="round"/>
   <rect x="38" y="22" width="20" height="34" rx="5" fill="#191724" stroke="#9ccfd8" stroke-width="4"/>
