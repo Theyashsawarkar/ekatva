@@ -6,6 +6,11 @@
 </p>
 
 <p align="center">
+  <a href="https://theyashsawarkar.github.io/ekatva/"><b>Website and documentation</b></a>
+</p>
+
+<p align="center">
+  <a href="https://github.com/Theyashsawarkar/ekatva/actions/workflows/ci.yml"><img alt="CI" src="https://github.com/Theyashsawarkar/ekatva/actions/workflows/ci.yml/badge.svg"></a>
   <a href="LICENSE"><img alt="License: MIT" src="https://img.shields.io/badge/license-MIT-f5e0dc"></a>
   <img alt="Linux" src="https://img.shields.io/badge/desktop-linux-89b4fa">
   <img alt="Android" src="https://img.shields.io/badge/phone-android-a6e3a1">
@@ -254,7 +259,7 @@ walks through one end to end.
 | Daemon: pairing, files with undo, caffeine, agents, the log, CLI | done, tested |
 | Daemon: tunnel and rendezvous, media, screen and input, root | planned |
 | Desktop window (Electron) | planned |
-| Website and documentation | planned |
+| Website and documentation | done: [theyashsawarkar.github.io/ekatva](https://theyashsawarkar.github.io/ekatva/) |
 | Phone app | planned |
 | Calls, SMS, notifications | planned |
 | Root approvals from the phone | planned |

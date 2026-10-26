@@ -1,0 +1,61 @@
+---
+title: "Your phone and your laptop, as one device"
+description: "ekatva pairs your Android phone and your Linux laptop with one QR code. Then each controls the other, near or far, end-to-end encrypted. Your AI agents in your pocket, calls from the laptop, every action logged and undoable."
+template: splash
+hero:
+  tagline: Pair once with a QR code. Then answer your AI agents from the phone, place calls from the laptop, reach every file both ways, and keep the laptop awake with the lid closed, on the same Wi-Fi or from anywhere, end-to-end encrypted. Every action is logged on both devices, and anything that can be undone, can be.
+  image:
+    file: ../../assets/hero.svg
+  actions:
+    - text: What it is
+      link: /ekatva/start/what-is-ekatva/
+      icon: right-arrow
+    - text: Security model
+      link: /ekatva/security/model/
+      variant: minimal
+    - text: GitHub
+      link: https://github.com/Theyashsawarkar/ekatva
+      icon: external
+      variant: minimal
+---
+
+import { Card, CardGrid, LinkCard } from "@astrojs/starlight/components";
+
+<p class="devanagari">एकत्व · ekatva · "oneness"</p>
+
+<CardGrid stagger>
+  <Card title="Agents in your pocket" icon="rocket">
+    Claude Code is asking to run `pnpm test`? Your phone shows the question with its real options; one tap answers it in the right tmux pane. Reply, interrupt, or start a new session in any project.
+  </Card>
+  <Card title="Calls and texts from the laptop" icon="phone">
+    Dial from the laptop, see who's calling, read and answer messages, and get the phone's notifications on your desktop.
+  </Card>
+  <Card title="Every file, both ways" icon="document">
+    Browse, open, edit, move and delete files on the laptop from the phone, and on the phone from the laptop. Nothing is destroyed: every change can be undone.
+  </Card>
+  <Card title="High caffeine" icon="moon">
+    Keep the laptop awake from the phone, even with the lid closed, for a long agent run in a bag. It still locks, and it gives up before the battery dies.
+  </Card>
+  <Card title="Logged, verified, undoable" icon="list-format">
+    Every action, on both devices, goes into a hash-chained log, mirrored on the other device. Change one entry and the chain breaks.
+  </Card>
+  <Card title="Encrypted end to end" icon="seti:lock">
+    Noise, the handshake WireGuard uses. On your Wi-Fi or through a tunnel, the network sees only ciphertext. No passwords, just keys.
+  </Card>
+</CardGrid>
+
+## How it fits together
+
+<div class="flow">{`  Laptop                                     Phone
+  ekatva daemon (Node, systemd)              ekatva app (React Native)
+    tRPC server + client  ◀── Noise ──▶  tRPC client + server
+    agents · files · caffeine                  calls · SMS · notifications
+    the action log + phone's mirror            its log + laptop's mirror
+  Electron window · waybar · \`ekatva\` CLI      fingerprint + app password`}</div>
+
+<CardGrid>
+  <LinkCard title="Pair your phone" href="/ekatva/start/pairing/" description="One QR code, four emoji, done." />
+  <LinkCard title="The action log" href="/ekatva/features/action-log/" description="What's recorded, where, and how undo works." />
+  <LinkCard title="Add a feature" href="/ekatva/guides/capabilities/" description="Every feature is a capability: one contract, two sides." />
+  <LinkCard title="Replacing KDE Connect" href="/ekatva/guides/kde-connect/" description="What it covers, and the plan to retire it in Vayu." />
+</CardGrid>

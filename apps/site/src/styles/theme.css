@@ -1,0 +1,52 @@
+/* rose-pine, like the rest of Vayu */
+:root {
+  --sl-font: "Inter", system-ui, sans-serif;
+  --sl-font-mono: "JetBrains Mono", ui-monospace, monospace;
+}
+:root[data-theme="dark"] {
+  --sl-color-accent-low: #2a2340;
+  --sl-color-accent: #c4a7e7;
+  --sl-color-accent-high: #e6dbf6;
+  --sl-color-white: #e0def4;
+  --sl-color-gray-1: #d6d3ec;
+  --sl-color-gray-2: #bcb8d6;
+  --sl-color-gray-3: #908caa;
+  --sl-color-gray-4: #6e6a86;
+  --sl-color-gray-5: #393552;
+  --sl-color-gray-6: #1f1d2e;
+  --sl-color-black: #16141f;
+}
+:root[data-theme="light"] {
+  --sl-color-accent-low: #ede4f8;
+  --sl-color-accent: #8a63c4;
+  --sl-color-accent-high: #4b2f78;
+}
+.hero h1 {
+  letter-spacing: -0.03em;
+}
+.sl-markdown-content table {
+  display: table;
+  width: 100%;
+}
+.devanagari {
+  font-family: "Noto Sans Devanagari", sans-serif;
+  color: var(--sl-color-gray-3);
+  font-weight: 600;
+}
+.landing-grid {
+  display: grid;
+  gap: 1rem;
+  grid-template-columns: repeat(auto-fit, minmax(15rem, 1fr));
+  margin-top: 1.5rem;
+}
+.flow {
+  font-family: var(--sl-font-mono);
+  font-size: 0.85rem;
+  line-height: 1.6;
+  padding: 1rem 1.2rem;
+  border-radius: 0.75rem;
+  background: var(--sl-color-gray-6);
+  border: 1px solid var(--sl-color-gray-5);
+  overflow-x: auto;
+  white-space: pre;
+}

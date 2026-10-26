@@ -4,6 +4,12 @@ Newest first. Releases are tags (`vX.Y.Z`); every package's `version` moves toge
 
 ## Unreleased
 
+- The website and documentation (Astro Starlight, GitHub Pages): what it
+  is, install, pairing, every feature, the security model, cryptography and
+  threats, adding a capability, development, replacing KDE Connect, the CLI,
+  configuration and the protocol.
+- CI: lint, build, typecheck and tests on every push, and a secret scan
+  (gitleaks); Dependabot.
 - The monorepo: Turborepo, pnpm workspaces, TypeScript, Biome.
 - `@ekatva/link`: Noise_XX_25519_ChaChaPoly_BLAKE2b on the audited
   pure-JS @noble libraries (the same code in Node, Electron and React
