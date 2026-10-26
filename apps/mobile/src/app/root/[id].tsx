@@ -85,7 +85,7 @@ export default function Root() {
             </View>
           </Card>
           {r.commands.map((cmd, i) => (
-            <Card key={`${i}:${cmd.cmd}`}>
+            <Card key={`${cmd.cmd}\u0000${cmd.why}`}>
               <View style={{ flexDirection: "row", alignItems: "center", gap: 10 }}>
                 <Switch
                   value={!off.has(i)}

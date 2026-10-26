@@ -58,7 +58,8 @@ describe("channel", () => {
     const big = new Uint8Array(300_000).map((_, i) => i % 251);
     const back = new Promise<Uint8Array>((res) => phone.channel.onPort(PORT_LAPTOP, res));
     laptop.send(PORT_LAPTOP, big);
-    expect(await back).toEqual(big);
+    // Compared as bytes: a deep equal on 300k elements takes seconds.
+    expect(Buffer.compare(Buffer.from(await back), Buffer.from(big))).toBe(0);
 
     // The token is spent.
     expect(book.redeem(token)).toBe(false);
