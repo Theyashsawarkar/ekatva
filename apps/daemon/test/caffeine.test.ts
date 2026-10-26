@@ -94,7 +94,7 @@ describe("caffeine", () => {
     await c.set("high", null);
     battery = { percent: 8, discharging: true };
     await vi.advanceTimersByTimeAsync(2100);
-    await settle(async () => (await c.get()).level === "on");
+    await settle(async () => (await c.get()).level === "on" && auto.length > 0);
     expect((await c.get()).level).toBe("on");
     expect(auto[0]).toMatch(/battery at 8%/);
     expect(holds.at(-1)?.args).toContain("--what=idle:sleep");
