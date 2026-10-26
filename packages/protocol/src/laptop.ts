@@ -86,6 +86,38 @@ export const RootRequest = z.object({
 });
 export type RootRequest = z.infer<typeof RootRequest>;
 
+export const PlayerStatus = z.enum(["Playing", "Paused", "Stopped"]);
+export const Player = z.object({
+  /** The MPRIS name: "nada", "drishya", "chromium.instance42". */
+  id: z.string(),
+  /** For people: "nāda", "Chromium". */
+  name: z.string(),
+  status: PlayerStatus,
+  title: z.string(),
+  artist: z.string(),
+  album: z.string(),
+  /** An http(s) URL or a small data: URL; null when there's none. */
+  art: z.string().nullable(),
+  /** Milliseconds; null when the player doesn't say. */
+  length: z.number().nullable(),
+  position: z.number().nullable(),
+  /** When `position` was read, ms since the epoch (a playing track moves on from there). */
+  at: z.number(),
+});
+export type Player = z.infer<typeof Player>;
+
+export const Media = z.object({
+  /** The one to show first (playing, else the first), then the rest. */
+  players: z.array(Player),
+  volume: z.object({ percent: z.number(), muted: z.boolean() }).nullable(),
+  /** The screen's brightness in percent; null without a backlight. */
+  brightness: z.number().nullable(),
+});
+export type Media = z.infer<typeof Media>;
+
+export const MediaAction = z.enum(["play-pause", "play", "pause", "next", "previous", "stop"]);
+export type MediaAction = z.infer<typeof MediaAction>;
+
 export const PhoneEvent = z.discriminatedUnion("kind", [
   z.object({
     kind: z.literal("notification"),
@@ -138,6 +170,15 @@ export interface LaptopServices {
       prompt: string | null,
       agent: "claude" | "codex",
     ): Promise<Done<AgentSession>>;
+  };
+  media: {
+    get(): Promise<Media>;
+    changes(signal: AbortSignal | undefined): AsyncIterable<Media>;
+    /** `player` null: the one shown first. */
+    control(player: string | null, action: MediaAction): Promise<Done<null>>;
+    seek(player: string | null, position: number): Promise<Done<null>>;
+    volume(change: { percent?: number; muted?: boolean }): Promise<Done<null>>;
+    brightness(percent: number): Promise<Done<null>>;
   };
   clipboard: {
     get(): Promise<string>;
@@ -317,6 +358,43 @@ const power = api.router({
     .mutation(async ({ ctx }) => done(ctx, await ctx.services.power.suspend())),
 });
 
+const Which = z.string().max(200).nullable().default(null);
+const media = api.router({
+  get: p.meta({ cap: "media" }).query(({ ctx }) => ctx.services.media.get()),
+  watch: p
+    .meta({ cap: "media" })
+    .subscription(({ ctx, signal }) => stream(ctx.services.media.changes(signal))),
+  control: p
+    .meta({ cap: "media" })
+    .input(z.object({ player: Which, action: MediaAction }))
+    .mutation(async ({ ctx, input }) =>
+      done(ctx, await ctx.services.media.control(input.player, input.action)),
+    ),
+  seek: p
+    .meta({ cap: "media" })
+    .input(z.object({ player: Which, position: z.number().int().min(0) }))
+    .mutation(async ({ ctx, input }) =>
+      done(ctx, await ctx.services.media.seek(input.player, input.position)),
+    ),
+  volume: p
+    .meta({ cap: "media" })
+    .input(
+      z
+        .object({
+          percent: z.number().int().min(0).max(100).optional(),
+          muted: z.boolean().optional(),
+        })
+        .refine((v) => v.percent !== undefined || v.muted !== undefined, "nothing to change"),
+    )
+    .mutation(async ({ ctx, input }) => done(ctx, await ctx.services.media.volume(input))),
+  brightness: p
+    .meta({ cap: "media" })
+    .input(z.object({ percent: z.number().int().min(1).max(100) }))
+    .mutation(async ({ ctx, input }) =>
+      done(ctx, await ctx.services.media.brightness(input.percent)),
+    ),
+});
+
 const clipboard = api.router({
   get: p
     .meta({ cap: "clipboard", audit: true, summary: () => "Read the clipboard" })
@@ -385,6 +463,7 @@ export const laptopRouter = api.router({
   agents,
   caffeine,
   power,
+  media,
   clipboard,
   files: filesRouter(api, "files", "files.private", (ctx) => ctx.services.files),
   journal: journalRouter(api, "journal", (ctx) => ctx.services.undo, capOf),

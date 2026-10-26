@@ -17,7 +17,7 @@ description: "The link, the ports, and the APIs."
 ## The laptop's API
 
 `status` · `agents.{list,watch,projects,tail,answer,reply,interrupt,start}` ·
-`caffeine.{get,watch,set}` · `power.{lock,suspend}` · `clipboard.{get,set}` ·
+`caffeine.{get,watch,set}` · `power.{lock,suspend}` · `media.{get,watch,control,seek,volume,brightness}` · `clipboard.{get,set}` ·
 `files.{list,stat,read,write,mkdir,move,copy,remove}` ·
 `journal.{head,since,follow,undo}` · `root.{pending,respond}` · `inbox.report`
 

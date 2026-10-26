@@ -2,6 +2,7 @@ import { router } from "expo-router";
 import { Pressable, View } from "react-native";
 import { Button, Card, Chip, Empty, Screen, T } from "../../ui/kit";
 import { LinkChip } from "../../ui/link-chip";
+import { MediaCard } from "../../ui/media-card";
 import { useApp, useLink, usePoll } from "../../ui/state";
 import { c } from "../../ui/theme";
 
@@ -177,6 +178,7 @@ export default function Home() {
             : "High keeps it running with the lid closed: for a long run in a bag."}
         </T>
       </Card>
+      <MediaCard client={client ?? null} />
       <View style={{ flexDirection: "row", gap: 10 }}>
         <Button
           style={{ flex: 1 }}

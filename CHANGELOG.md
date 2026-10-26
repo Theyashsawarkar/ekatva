@@ -4,6 +4,13 @@ Newest first. Releases are tags (`vX.Y.Z`); every package's `version` moves toge
 
 ## Unreleased
 
+- Media from the phone: what the laptop is playing (any MPRIS player:
+  nāda, drishya, browsers), with its cover and position; play, pause,
+  skip, seek; the volume and mute (PipeWire) and the screen's brightness.
+  A card on the phone's home screen. Each change is logged; pause/play,
+  seek, volume and brightness undo to what they were. Brightness never
+  goes below 1%. Needs the `media` capability.
+
 - The phone's native side (`apps/mobile/modules/ekatva-phone`, Kotlin, an
   Expo module): lock the phone from the laptop (device admin, force-lock
   only), place, answer and end calls, see incoming ones with the contact's

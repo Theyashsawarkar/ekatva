@@ -66,7 +66,8 @@ anything but ciphertext.
   vim keys; windows and workspaces; launch apps; lock; sleep.
 - **Media.** [nāda](https://github.com/Theyashsawarkar/nada) and
   [drishya](https://github.com/Theyashsawarkar/drishya) (or any MPRIS
-  player): play, seek, queue, search; volume and brightness.
+  player): what's playing, play, pause, skip, seek; volume and
+  brightness. nāda's queue and search come next.
 - **All your files.** Browse, open, create, edit, rename, move, copy and
   delete anything in your home folder from the phone. Every change can be
   undone. Private places (`~/.ssh`, `~/.gnupg`, keyrings) need a separate,
@@ -258,7 +259,8 @@ walks through one end to end.
 | Protocol: capabilities, tRPC both ways, action log, undo | done, tested |
 | Daemon: pairing, files with undo, caffeine, agents, the log, CLI | done, tested |
 | From anywhere: tunnel and encrypted rendezvous | done, tested |
-| Daemon: media, screen and input | planned |
+| Media: players, volume, brightness | done, tested |
+| Screen and input | planned |
 | Desktop window (Electron) | done: phones, pairing, the logs, caffeine, the phone |
 | Website and documentation | done: [theyashsawarkar.github.io/ekatva](https://theyashsawarkar.github.io/ekatva/) |
 | Phone app | core done and tested against the daemon; screens done; first device build next |

@@ -26,6 +26,7 @@ export default defineConfig({
             "features/agents",
             "features/files",
             "features/caffeine",
+            "features/media",
             "features/phone",
             "features/root",
             "features/action-log",

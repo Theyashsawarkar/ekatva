@@ -8,6 +8,8 @@
       "!**/.turbo",
       "!**/.astro",
       "!**/node_modules",
+      "!apps/mobile/android",
+      "!**/android/build",
       "!**/*.html",
       "!**/*.md"
     ]

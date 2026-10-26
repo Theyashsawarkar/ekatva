@@ -60,6 +60,8 @@ beforeAll(async () => {
     mdns: false,
     rendezvous: false,
     caffeineHost: fakeHost,
+    // Nothing real: no players, no volume, no backlight.
+    mediaHost: { run: async () => ({ code: 127, out: "" }), art: async () => null, now: Date.now },
     log: () => undefined,
   });
   await daemon.start();

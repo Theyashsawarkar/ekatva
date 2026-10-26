@@ -57,6 +57,7 @@ import { FileStore } from "./journalFile.js";
 import { AgentsService, type Tmux } from "./services/agents.js";
 import { CaffeineService, type Host } from "./services/caffeine.js";
 import { LaptopFiles } from "./services/files.js";
+import { type MediaHost, MediaService } from "./services/media.js";
 import { Rendezvous } from "./services/rendezvous.js";
 import { RootBridge } from "./services/root.js";
 import { SystemService } from "./services/system.js";
@@ -81,6 +82,7 @@ export interface DaemonOptions {
   host?: string;
   mdns?: boolean;
   caffeineHost?: Host;
+  mediaHost?: MediaHost;
   tmux?: Tmux;
   log?: (msg: string) => void;
   /** The addresses phones are told (default: this machine's IPv4 addresses). */
@@ -157,6 +159,7 @@ export class Daemon {
   readonly caffeine: CaffeineService;
   readonly agents: AgentsService;
   readonly system: SystemService;
+  readonly media: MediaService;
   readonly root: RootBridge;
   readonly tunnel: Tunnel;
   private rendezvous: Rendezvous | null = null;
@@ -174,6 +177,7 @@ export class Daemon {
     });
     this.caffeine = new CaffeineService(o.caffeineHost, join(o.stateDir, "caffeine.json"));
     this.agents = new AgentsService(o.tmux, o.config.agents.roots);
+    this.media = new MediaService(o.mediaHost);
     this.tunnel = new Tunnel(
       o.config.tunnel.kind,
       () => this.port,
@@ -264,6 +268,7 @@ export class Daemon {
     this.bonjour?.destroy();
     this.rendezvous?.stop();
     this.tunnel.stop();
+    this.media.stop();
     this.caffeine.shutdown();
     this.agents.shutdown();
     await new Promise<void>((r) => (this.wss ? this.wss.close(() => r()) : r()));
@@ -527,6 +532,14 @@ export class Daemon {
         interrupt: (id) => this.agents.interrupt(id),
         start: (project, prompt, agent) => this.agents.start(project, prompt, agent),
       },
+      media: {
+        get: () => this.media.get(),
+        changes: (signal) => this.media.changes(signal),
+        control: (player, action) => this.media.control(player, action),
+        seek: (player, position) => this.media.seek(player, position),
+        volume: (change) => this.media.volume(change),
+        brightness: (percent) => this.media.brightness(percent),
+      },
       clipboard: {
         get: () => this.system.clipboardGet(),
         set: (text) => this.system.clipboardSet(text),
@@ -546,6 +559,7 @@ export class Daemon {
   private async undo(u: Undo): Promise<Done<unknown>> {
     const d = u.data as Record<string, unknown>;
     if (u.kind.startsWith("files.")) return this.files.undo(u);
+    if (u.kind.startsWith("media.")) return this.media.undo(u.kind, d);
     if (u.kind === "caffeine.set") return this.caffeine.undo(d as never);
     if (u.kind === "clipboard.set") return this.system.clipboardSet(String(d.text ?? ""));
     if (u.kind === "devices.restore") {
