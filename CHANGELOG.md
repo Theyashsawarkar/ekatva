@@ -4,6 +4,16 @@ Newest first. Releases are tags (`vX.Y.Z`); every package's `version` moves toge
 
 ## Unreleased
 
+- From anywhere: when the phone can't reach the laptop where it last was,
+  it asks the pair's private mailbox on ntfy ("where are you?"); the
+  laptop starts a tunnel (cloudflared quick tunnel by default, ngrok, or
+  Tailscale's address) and answers with its URL and addresses; the phone
+  saves them and connects. The topic and the key come from the two
+  devices' static keys, so the server sees a random topic and ciphertext;
+  messages older than 10 minutes are refused. The tunnel stops after 10
+  idle minutes. `ekatva pair --away` puts a tunnel URL in the QR code.
+  `[tunnel] kind / server / idle_minutes` in config.toml.
+
 - Root approvals from the phone. anumati (from v1.3.0) hands its request
   to the daemon over `ekatva-root.sock` (0600, in your runtime directory);
   phones with the "root" capability (off by default) see it live, exactly

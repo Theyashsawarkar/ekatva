@@ -152,6 +152,7 @@ describe("phone and laptop, end to end", () => {
       port: 0,
       host: "127.0.0.1",
       mdns: false,
+      rendezvous: false,
       caffeineHost: {
         run: async () => ({ code: 0, out: "" }),
         hold: () => ({ stop() {}, onExit() {} }),

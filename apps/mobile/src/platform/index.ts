@@ -1,5 +1,5 @@
 /** The real phone behind the core's interfaces: Expo's modules on Android. */
-import { webSocketTransport } from "@ekatva/link";
+import { Ntfy, webSocketTransport } from "@ekatva/link";
 import * as Battery from "expo-battery";
 import * as Clipboard from "expo-clipboard";
 import Constants from "expo-constants";
@@ -211,5 +211,6 @@ export function platform(onAlert: (m: string) => void): Platform {
       model: Device.modelName ?? "",
     },
     onAlert,
+    ntfy: new Ntfy(),
   };
 }

@@ -3,7 +3,7 @@
  * the phone's action log and its copies of the laptops', the phone's API,
  * and the link. Built from a `Platform`, so tests can give it fakes.
  */
-import { toB64u } from "@ekatva/link";
+import { type Ntfy, toB64u } from "@ekatva/link";
 import { Journal, type JournalStore, Mirror, type PhoneServices } from "@ekatva/protocol";
 import { type Fs, PhoneFiles } from "./files";
 import type { KV } from "./kv";
@@ -25,6 +25,8 @@ export interface Platform {
   open: Opener;
   info: Record<string, string>;
   onAlert?: (message: string) => void;
+  /** The rendezvous server (finding the laptop from elsewhere). */
+  ntfy?: Ntfy;
 }
 
 export class Session {
@@ -79,6 +81,7 @@ export class Session {
       open: p.open,
       hello: { name: p.device.name, info: p.info },
       ...(p.onAlert ? { onAlert: p.onAlert } : {}),
+      ...(p.ntfy ? { ntfy: p.ntfy } : {}),
     });
     session = new Session(p, secrets, laptops, journal, files, services, link);
     return session;

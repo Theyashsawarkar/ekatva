@@ -10,6 +10,9 @@ import {
   connect,
   fromB64u,
   LinkError,
+  mailbox,
+  type Ntfy,
+  nonce,
   PORT_LAPTOP,
   PORT_PHONE,
   parseOffer,
@@ -49,6 +52,10 @@ export interface LinkDeps {
   hello: { name: string; info: Record<string, string> };
   onAlert?: (message: string) => void;
   now?: () => number;
+  /** The rendezvous, for finding the laptop when it's not on this network. */
+  ntfy?: Ntfy;
+  /** How long to wait for the laptop's answer in the mailbox. */
+  rendezvousWaitMs?: number;
 }
 
 const MAX_BACKOFF_MS = 30_000;
@@ -163,10 +170,24 @@ export class LinkManager {
       return;
     }
     this.set({ status: "connecting", laptop: laptop.key });
+    let result = await this.tryAll(laptop, laptop.lan, laptop.url);
+    if (result === "ok" || result === "stop") return;
+    // Not where it was: ask the pair's mailbox where it is now.
+    const found = await this.ask(laptop);
+    if (found) {
+      await this.d.laptops.update(laptop.key, { lan: found.lan, url: found.url });
+      result = await this.tryAll(laptop, found.lan, found.url);
+      if (result === "ok" || result === "stop") return;
+    }
+    this.scheduleRetry(laptop.key, result);
+  }
+
+  /** Tries each address in turn: "ok", "stop" (don't retry), or the last error. */
+  private async tryAll(laptop: LaptopRecord, lan: string[], url: string | null): Promise<string> {
     let error = "can't reach the laptop";
-    for (const { url, via } of this.urls(laptop.lan, laptop.url)) {
+    for (const { url: u, via } of this.urls(lan, url)) {
       try {
-        const t = await this.d.open(url, 4000);
+        const t = await this.d.open(u, 4000);
         const { channel, welcome } = await connect(t, {
           me: this.d.secrets.identity,
           expect: fromB64u(laptop.key),
@@ -174,7 +195,7 @@ export class LinkManager {
         });
         this.attempts = 0;
         this.attach(channel, laptop, via, welcome);
-        return;
+        return "ok";
       } catch (e) {
         if (e instanceof LinkError && e.code === CLOSE.denied) {
           // The laptop doesn't know this phone any more: don't keep knocking.
@@ -184,14 +205,35 @@ export class LinkManager {
             error: `${laptop.name} no longer knows this phone; pair again`,
             retryAt: null,
           });
-          return;
+          return "stop";
         }
         if (e instanceof LinkError && e.code === CLOSE.wrongKey)
           error = "something else answered at the laptop's address";
         else error = (e as Error).message || error;
       }
     }
-    this.scheduleRetry(laptop.key, error);
+    return error;
+  }
+
+  /** Posts "where are you?" to the pair's mailbox and waits for the laptop's answer. */
+  private async ask(laptop: LaptopRecord): Promise<{ url: string | null; lan: string[] } | null> {
+    if (!this.d.ntfy) return null;
+    const mb = mailbox(this.d.secrets.identity, fromB64u(laptop.key));
+    const n = nonce();
+    try {
+      await this.d.ntfy.publish(mb.topic, mb.seal({ t: "where", at: this.now(), n }));
+      const until = this.now() + (this.d.rendezvousWaitMs ?? 45_000);
+      while (this.now() < until && this.wanted) {
+        await new Promise((r) => setTimeout(r, 1500));
+        for (const m of await this.d.ntfy.poll(mb.topic, "5m")) {
+          const msg = mb.open(m.message, this.now());
+          if (msg?.t === "here" && msg.n === n) return { url: msg.url, lan: msg.lan };
+        }
+      }
+    } catch {
+      // no internet either
+    }
+    return null;
   }
 
   private scheduleRetry(laptop: string, error: string | null): void {

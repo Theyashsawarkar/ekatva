@@ -17,6 +17,7 @@ import {
   fromB64u,
   type KeyPair,
   LinkError,
+  Ntfy,
   PAIR_TTL_MS,
   PORT_LAPTOP,
   PORT_PHONE,
@@ -56,8 +57,10 @@ import { FileStore } from "./journalFile.js";
 import { AgentsService, type Tmux } from "./services/agents.js";
 import { CaffeineService, type Host } from "./services/caffeine.js";
 import { LaptopFiles } from "./services/files.js";
+import { Rendezvous } from "./services/rendezvous.js";
 import { RootBridge } from "./services/root.js";
 import { SystemService } from "./services/system.js";
+import { Tunnel } from "./services/tunnel.js";
 
 const VERSION = "0.1.0";
 /** A peer that fails this many handshakes in the window is shut out for it. */
@@ -80,6 +83,11 @@ export interface DaemonOptions {
   caffeineHost?: Host;
   tmux?: Tmux;
   log?: (msg: string) => void;
+  /** The addresses phones are told (default: this machine's IPv4 addresses). */
+  lan?: (port: number) => string[];
+  /** Watch the rendezvous mailboxes (default: when a tunnel kind is set). */
+  rendezvous?: boolean;
+  rendezvousEveryMs?: number;
   /** Desktop notifications (pairing requests, log mismatches). */
   notify?: (title: string, body: string, urgent?: boolean) => void;
 }
@@ -150,6 +158,8 @@ export class Daemon {
   readonly agents: AgentsService;
   readonly system: SystemService;
   readonly root: RootBridge;
+  readonly tunnel: Tunnel;
+  private rendezvous: Rendezvous | null = null;
   readonly id: string;
   port = 0;
 
@@ -164,6 +174,12 @@ export class Daemon {
     });
     this.caffeine = new CaffeineService(o.caffeineHost, join(o.stateDir, "caffeine.json"));
     this.agents = new AgentsService(o.tmux, o.config.agents.roots);
+    this.tunnel = new Tunnel(
+      o.config.tunnel.kind,
+      () => this.port,
+      (m) => this.log(m),
+      o.config.tunnel.idle_minutes,
+    );
     this.root = new RootBridge(
       o.rootSocketPath ?? join(dirname(o.socketPath), "ekatva-root.sock"),
       (m) => this.log(m),
@@ -222,6 +238,18 @@ export class Daemon {
     await this.listen();
     await this.listenLocal();
     await this.root.listen();
+    // Watch the mailboxes when phones may reach the laptop from outside.
+    if (this.o.config.tunnel.kind !== "none" && this.o.rendezvous !== false) {
+      this.rendezvous = new Rendezvous(
+        this.o.key,
+        () => this.devices.all(),
+        this.tunnel,
+        () => this.lanAddresses(),
+        new Ntfy(this.o.config.tunnel.server),
+        (m) => this.log(m),
+      );
+      this.rendezvous.start(this.o.rendezvousEveryMs);
+    }
     if (this.o.mdns ?? this.o.config.advertise) await this.advertise();
     this.log(
       `ekatva ${VERSION}: listening on port ${this.port}, ${this.devices.all().length} paired device(s)`,
@@ -234,6 +262,8 @@ export class Daemon {
     this.peers.clear();
     for (const p of this.pendings.values()) p.decide({ ok: false, reason: "the laptop stopped" });
     this.bonjour?.destroy();
+    this.rendezvous?.stop();
+    this.tunnel.stop();
     this.caffeine.shutdown();
     this.agents.shutdown();
     await new Promise<void>((r) => (this.wss ? this.wss.close(() => r()) : r()));
@@ -412,6 +442,11 @@ export class Daemon {
     };
     const peer: Peer = { key, channel, phone, close, via };
     this.peers.set(key, peer);
+    if (via === "tunnel") {
+      this.tunnel.touch();
+      const keep = setInterval(() => this.tunnel.touch(), 60_000);
+      channel.onClose(() => clearInterval(keep));
+    }
     void this.devices.seen(key, channel.peer.info);
     this.log(`${device.name} connected (${via})`);
     channel.onClose((reason) => {
@@ -566,6 +601,7 @@ export class Daemon {
   }
 
   lanAddresses(): string[] {
+    if (this.o.lan) return this.o.lan(this.port);
     const out: string[] = [];
     for (const list of Object.values(networkInterfaces())) {
       for (const a of list ?? []) {
@@ -581,17 +617,30 @@ export class Daemon {
       start: async (away): Promise<Offer> => {
         const token = this.tokens.issue();
         const lan = this.lanAddresses();
-        // The tunnel comes with the rendezvous; until then, away is refused.
-        if (away)
-          throw new TRPCError({
-            code: "NOT_IMPLEMENTED",
-            message: "pairing from away isn't built yet; pair on the same Wi-Fi",
-          });
+        let url: string | null = null;
+        if (away) {
+          const reach = await this.tunnel.start();
+          url = reach.url;
+          lan.push(...reach.lan);
+          if (!url && !reach.lan.length) {
+            const kind = this.o.config.tunnel.kind;
+            throw new TRPCError({
+              code: "PRECONDITION_FAILED",
+              message: `no way in from outside: ${kind === "none" ? "set [tunnel] kind in config.toml" : `install ${kind}`}, or pair on the same Wi-Fi`,
+            });
+          }
+        }
         return {
-          uri: formatOffer({ key: this.o.key.publicKey, token, name: this.o.config.name, lan }),
+          uri: formatOffer({
+            key: this.o.key.publicKey,
+            token,
+            name: this.o.config.name,
+            lan,
+            ...(url ? { url } : {}),
+          }),
           expires: Date.now() + PAIR_TTL_MS,
           lan,
-          url: null,
+          url,
         };
       },
       pending: (signal) =>

@@ -22,7 +22,8 @@ import { run } from "./services/system.js";
 
 const HELP = `ekatva ${VERSION}: your phone and your laptop as one device
 
-  ekatva pair [--grants PRESET]   show a QR code for the phone to scan
+  ekatva pair [--grants PRESET] [--away]
+                                  show a QR code for the phone to scan (--away: from anywhere)
   ekatva devices                  paired phones, online or not
   ekatva grant DEVICE WHAT        what a phone may do: a preset or capabilities
   ekatva unpair DEVICE            forget a phone (undoable)
@@ -77,13 +78,17 @@ function printEntry(e: Logged): void {
   );
 }
 
-async function pair(api: ReturnType<typeof client>["api"], preset: string): Promise<void> {
+async function pair(
+  api: ReturnType<typeof client>["api"],
+  preset: string,
+  away: boolean,
+): Promise<void> {
   const grants = preset in PRESETS ? [...PRESETS[preset as Preset]] : fail(`no preset "${preset}"`);
-  const offer = await api.admin.pair.start.mutate({ away: false });
+  const offer = await api.admin.pair.start.mutate({ away });
   const qr = await import("qrcode-terminal");
   qr.default.generate(offer.uri, { small: true }, (s: string) => process.stdout.write(`${s}\n`));
   process.stdout.write(
-    `Scan this with the ekatva app. It works once, for 2 minutes.\n${offer.lan.length ? `On this network at ${offer.lan.join(", ")}` : "No network address found: is Wi-Fi on?"}\n\nWaiting for the phone…\n`,
+    `Scan this with the ekatva app. It works once, for 2 minutes.\n${offer.lan.length ? `On this network at ${offer.lan.join(", ")}` : "No network address found: is Wi-Fi on?"}${offer.url ? `\nFrom anywhere through ${offer.url}` : ""}\n\nWaiting for the phone…\n`,
   );
   const pending = await new Promise<{ id: string; name: string; sas: string[] }>(
     (resolve, reject) => {
@@ -196,7 +201,7 @@ async function main(argv: string[]): Promise<void> {
   try {
     switch (cmd) {
       case "pair":
-        await pair(api, flag("--grants") ?? "everything-but-root");
+        await pair(api, flag("--grants") ?? "everything-but-root", rest.includes("--away"));
         break;
       case "devices": {
         const list = await api.admin.devices.list.query();

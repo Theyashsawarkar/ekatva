@@ -8,6 +8,7 @@
  *   [undo]    days = 30              max_gb = 5
  *   [agents]  roots = ["~/personal", "~/codes"]
  *   [tunnel]  kind = "cloudflared"   # or "ngrok", "tailscale", "none"
+ *             server = "https://ntfy.sh"   idle_minutes = 10
  */
 import { readFileSync } from "node:fs";
 import { hostname } from "node:os";
@@ -60,8 +61,13 @@ const Config = z.object({
     })
     .default({ roots: [] }),
   tunnel: z
-    .object({ kind: z.enum(["cloudflared", "ngrok", "tailscale", "none"]).default("cloudflared") })
-    .default({ kind: "cloudflared" }),
+    .object({
+      kind: z.enum(["cloudflared", "ngrok", "tailscale", "none"]).default("cloudflared"),
+      /** The ntfy server for the rendezvous. */
+      server: z.string().url().default("https://ntfy.sh"),
+      idle_minutes: z.number().min(1).default(10),
+    })
+    .default({ kind: "cloudflared", server: "https://ntfy.sh", idle_minutes: 10 }),
 });
 export type Config = z.infer<typeof Config>;
 
