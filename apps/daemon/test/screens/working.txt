@@ -1,0 +1,11 @@
+● I'll calibrate the parser by reading the live tmux panes directly (read-only).
+
+● Listing tmux panes with their commands
+  ⎿  $ for p in %6 %20; do tmux capture-pane -p -t $p; done
+
+✽ Grooving… (7m 53s · ↓ 44.6k tokens · thought for 1s)
+
+──────────────────────────────────────────────────────────────────────────────
+❯ 
+──────────────────────────────────────────────────────────────────────────────
+  ⏵⏵ auto mode on (shift+tab to cycle) · ⧉ vayu-refinements · esc to interrupt · ← for agents

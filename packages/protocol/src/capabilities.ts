@@ -78,6 +78,13 @@ export const CAPABILITIES = {
     title: "The action log",
     detail: "read it and undo actions",
   },
+  /** This laptop's own user (the desktop window, the CLI); never granted to a phone. */
+  admin: {
+    side: "laptop",
+    risk: "critical",
+    title: "Manage ekatva",
+    detail: "pair, unpair, change what devices may do",
+  },
   // ---- on the phone, asked by the laptop
   "phone.status": {
     side: "phone",
@@ -133,7 +140,15 @@ export const CAPABILITIES = {
 >;
 
 export type Capability = keyof typeof CAPABILITIES;
-export const ALL = Object.keys(CAPABILITIES) as Capability[];
+/** Everything a device can be granted (all but `admin`). */
+export const ALL = (Object.keys(CAPABILITIES) as Capability[]).filter((c) => c !== "admin");
+/** What this laptop's own user may do: everything. */
+export const LOCAL = Object.keys(CAPABILITIES) as Capability[];
+
+/** Keeps only real, grantable capabilities. */
+export function grantable(list: readonly string[]): Capability[] {
+  return [...new Set(list)].filter((c): c is Capability => isCapability(c) && c !== "admin");
+}
 
 export const PRESETS = {
   everything: ALL,

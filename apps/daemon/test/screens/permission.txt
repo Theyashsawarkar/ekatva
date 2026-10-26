@@ -1,0 +1,14 @@
+● Running the test suite now.
+
+╭──────────────────────────────────────────────────────────────────────────────╮
+│ Bash command                                                                 │
+│                                                                              │
+│   pnpm test                                                                  │
+│   Run the test suite after the fix                                           │
+│                                                                              │
+│ Do you want to proceed?                                                      │
+│ ❯ 1. Yes                                                                     │
+│   2. Yes, and don't ask again for pnpm test commands in                      │
+│      /home/yash/codes/aura-arena                                             │
+│   3. No, and tell Claude what to do differently (esc)                        │
+╰──────────────────────────────────────────────────────────────────────────────╯

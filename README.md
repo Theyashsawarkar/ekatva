@@ -251,7 +251,10 @@ walks through one end to end.
 | Design | done |
 | Link: Noise, encrypted channel, pairing, emoji | done, tested |
 | Protocol: capabilities, tRPC both ways, action log, undo | done, tested |
-| Daemon: agents, caffeine, media, desktop | planned |
+| Daemon: pairing, files with undo, caffeine, agents, the log, CLI | done, tested |
+| Daemon: tunnel and rendezvous, media, screen and input, root | planned |
+| Desktop window (Electron) | planned |
+| Website and documentation | planned |
 | Phone app | planned |
 | Calls, SMS, notifications | planned |
 | Root approvals from the phone | planned |

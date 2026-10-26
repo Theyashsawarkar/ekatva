@@ -1,0 +1,41 @@
+{
+  "name": "@ekatva/daemon",
+  "version": "0.0.0",
+  "private": true,
+  "description": "The laptop side: always-on service, the tRPC server, the `ekatva` CLI.",
+  "type": "module",
+  "bin": {
+    "ekatva": "./bin/ekatva.js"
+  },
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "default": "./dist/index.js"
+    }
+  },
+  "scripts": {
+    "build": "tsc -p tsconfig.json",
+    "dev": "tsc -p tsconfig.json --watch",
+    "typecheck": "tsc -p tsconfig.json --noEmit",
+    "test": "vitest run"
+  },
+  "dependencies": {
+    "@ekatva/link": "workspace:*",
+    "@ekatva/protocol": "workspace:*",
+    "@noble/hashes": "2.4.0",
+    "@trpc/client": "11.19.0",
+    "@trpc/server": "11.19.0",
+    "bonjour-service": "1.4.4",
+    "qrcode-terminal": "0.12.0",
+    "smol-toml": "1.9.1",
+    "ws": "8.22.0",
+    "zod": "4.6.7"
+  },
+  "devDependencies": {
+    "@ekatva/config": "workspace:*",
+    "@types/node": "26.6.5",
+    "@types/ws": "8.18.2",
+    "typescript": "7.0.2",
+    "vitest": "5.0.5"
+  }
+}

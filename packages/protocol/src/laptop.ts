@@ -149,8 +149,68 @@ export interface LaptopServices {
   undo: Undoer;
 }
 
+export const Device = z.object({
+  key: z.string(),
+  name: z.string(),
+  grants: z.array(z.string()),
+  pairedAt: z.number(),
+  lastSeen: z.number().nullable(),
+  online: z.boolean(),
+  /** How it's connected right now. */
+  via: z.enum(["lan", "tunnel"]).nullable(),
+  info: z.record(z.string(), z.string()),
+});
+export type Device = z.infer<typeof Device>;
+
+export const PendingPair = z.object({
+  id: z.string(),
+  name: z.string(),
+  sas: z.array(z.string()),
+  info: z.record(z.string(), z.string()),
+  at: z.number(),
+});
+export type PendingPair = z.infer<typeof PendingPair>;
+
+export const Offer = z.object({
+  uri: z.string(),
+  expires: z.number(),
+  lan: z.array(z.string()),
+  url: z.string().nullable(),
+});
+export type Offer = z.infer<typeof Offer>;
+
+/** What only this laptop's own user does: from the desktop window or the CLI. */
+export interface LocalServices {
+  pair: {
+    start(away: boolean): Promise<Offer>;
+    pending(signal: AbortSignal | undefined): AsyncIterable<PendingPair[]>;
+    confirm(id: string, accept: boolean, grants: string[]): Promise<Done<Device | null>>;
+  };
+  devices: {
+    list(): Promise<Device[]>;
+    watch(signal: AbortSignal | undefined): AsyncIterable<Device[]>;
+    grant(key: string, grants: string[]): Promise<Done<Device>>;
+    rename(key: string, name: string): Promise<Done<Device>>;
+    unpair(key: string): Promise<Done<null>>;
+  };
+  log: {
+    /** "self" for this laptop's log, or a device's key for its mirrored log. */
+    list(host: string, after: number, limit: number): Promise<import("./journal.js").Entry[]>;
+    check(): Promise<{ host: string; name: string; seq: number; problem: string | null }[]>;
+  };
+  /** Ask a phone to do something (it checks its own grants and logs it too). */
+  phone(
+    key: string | null,
+    type: "query" | "mutation",
+    path: string,
+    input: unknown,
+  ): Promise<unknown>;
+}
+
 export interface LaptopContext extends BaseContext {
   services: LaptopServices;
+  /** Present only on the local socket. */
+  local?: LocalServices;
 }
 
 // ------------------------------------------------------------------ router
@@ -294,7 +354,7 @@ const inbox = api.router({
 /** Every procedure's capability, by path, for undo checks. */
 function capOf(action: string): Capability | undefined {
   const proc = (
-    laptopRouter._def.procedures as unknown as Record<
+    localRouter._def.procedures as unknown as Record<
       string,
       { _def: { meta?: { cap: Capability } } }
     >
@@ -315,4 +375,98 @@ export const laptopRouter = api.router({
 });
 
 export type LaptopRouter = typeof laptopRouter;
+
+const local = (ctx: LaptopContext) => {
+  if (!ctx.local) throw new TRPCError({ code: "FORBIDDEN", message: "only on this laptop" });
+  return ctx.local;
+};
+const Grants = z.array(z.string()).max(64);
+
+const admin = api.router({
+  pair: api.router({
+    start: p
+      .meta({ cap: "admin" })
+      .input(z.object({ away: z.boolean().default(false) }))
+      .mutation(async ({ ctx, input }) => {
+        act(ctx).summary = `Showed a pairing code${input.away ? " (reachable from anywhere)" : ""}`;
+        return local(ctx).pair.start(input.away);
+      }),
+    pending: p
+      .meta({ cap: "admin" })
+      .subscription(({ ctx, signal }) => stream(local(ctx).pair.pending(signal))),
+    confirm: p
+      .meta({ cap: "admin" })
+      .input(z.object({ id: z.string(), accept: z.boolean(), grants: Grants.default([]) }))
+      .mutation(async ({ ctx, input }) =>
+        done(ctx, await local(ctx).pair.confirm(input.id, input.accept, input.grants)),
+      ),
+  }),
+  devices: api.router({
+    list: p.meta({ cap: "admin" }).query(({ ctx }) => local(ctx).devices.list()),
+    watch: p
+      .meta({ cap: "admin" })
+      .subscription(({ ctx, signal }) => stream(local(ctx).devices.watch(signal))),
+    grant: p
+      .meta({ cap: "admin" })
+      .input(z.object({ key: z.string(), grants: Grants }))
+      .mutation(async ({ ctx, input }) =>
+        done(ctx, await local(ctx).devices.grant(input.key, input.grants)),
+      ),
+    rename: p
+      .meta({ cap: "admin" })
+      .input(z.object({ key: z.string(), name: z.string().min(1).max(64) }))
+      .mutation(async ({ ctx, input }) =>
+        done(ctx, await local(ctx).devices.rename(input.key, input.name)),
+      ),
+    unpair: p
+      .meta({ cap: "admin" })
+      .input(z.object({ key: z.string() }))
+      .mutation(async ({ ctx, input }) => done(ctx, await local(ctx).devices.unpair(input.key))),
+  }),
+  log: api.router({
+    list: p
+      .meta({ cap: "admin" })
+      .input(
+        z.object({
+          host: z.string().default("self"),
+          after: z.number().int().min(0).default(0),
+          limit: z.number().int().min(1).max(1000).default(200),
+        }),
+      )
+      .query(({ ctx, input }) => local(ctx).log.list(input.host, input.after, input.limit)),
+    check: p.meta({ cap: "admin" }).query(({ ctx }) => local(ctx).log.check()),
+  }),
+  phone: api.router({
+    query: p
+      .meta({ cap: "admin" })
+      .input(
+        z.object({
+          key: z.string().nullable().default(null),
+          path: z.string().max(100),
+          input: z.unknown().optional(),
+        }),
+      )
+      .query(({ ctx, input }) => local(ctx).phone(input.key, "query", input.path, input.input)),
+    mutate: p
+      .meta({ cap: "admin" })
+      .input(
+        z.object({
+          key: z.string().nullable().default(null),
+          path: z.string().max(100),
+          input: z.unknown().optional(),
+        }),
+      )
+      .mutation(async ({ ctx, input }) => {
+        act(ctx).summary = `Asked the phone: ${input.path}`;
+        return local(ctx).phone(input.key, "mutation", input.path, input.input);
+      }),
+  }),
+});
+
+/**
+ * What the local socket serves: the laptop's API (as this laptop's own
+ * user, with every capability) and `admin`.
+ */
+export const localRouter = api.router({ ...laptopRouter._def.record, admin });
+export type LocalRouter = typeof localRouter;
 export const createLaptopCaller = api.createCallerFactory(laptopRouter);

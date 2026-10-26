@@ -1,0 +1,45 @@
+~                                                                                                                                                                          at 05:22:58 PM
+>
+  │     │ example                                                                                                                                                              │       │
+  ├─────┼──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────┼───────┤
+  │ 5   │ Backend: Node, Express, REST, JWT and OAuth, SQL (15 common queries), caching, queues, system design, Docker and CI/CD                                               │ 315   │
+  ├─────┼──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────┼───────┤
+  │ 6   │ GCP: IAM, Cloud Run vs GKE vs App Engine, databases, Pub/Sub, Cloud Build, Vertex AI, Gemini, ADK, two reference architectures, AWS mapping                          │ 388   │
+  ├─────┼──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────┼───────┤
+  │ 7   │ DSA: about 70 classic service-company problems, each with brute force → better → optimal, dry runs and complexity. All code was run with node to check it.           │ 455   │
+  ├─────┼──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────┼───────┤
+  │ 8   │ Managerial round: STAR, "tell me about yourself", explaining your project, 55 behavioural questions with model answers, salary/notice questions, a 7-day revision    │ 563   │
+  │     │ plan                                                                                                                                                                 │       │
+  ├─────┼──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────┼───────┤
+  │ 9   │ Grand summary: last-hour cheat sheet, the 30 most likely questions, a mixed mock test                                                                                │ 616   │
+  └─────┴──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────┴───────┘
+
+  Every section starts with a Crux box (the idea at a glance). The book has about 190 diagrams, including Venn diagrams. Every section has exercises at Easy/Medium/Hard level, and every
+  chapter ends with 35–45 rapid-fire questions and a summary.
+
+  For the AI test: page 3 has a ready prompt to paste. The answer key covers all ~490 exercise questions. Each has a model answer, the points needed for full marks, red flags and a
+  follow-up question. Behavioural questions use a 1–5 rubric instead.
+
+  Give the AI the Examiner Pack, not the full book. It's smaller, so it's easier for Claude to read in one go.
+
+  On your phone, the contents page links and bookmarks jump straight to any section.
+
+✻ Worked for 3h 56m 26s · done 9:26 PM
+
+● Background command "Wait for phone, then push PDFs to Downloads" completed (exit code 0)
+
+  Read 1 file
+
+● Both PDFs are now in your phone's Download folder:
+
+  - Interview_Playbook.pdf (the full book)
+  - Interview_Examiner_Pack.pdf (only the exercises and answer key; give this one to the AI)
+
+  All the best for the interview! 🚀
+
+✻ Sautéed for 8s · done 9:28 PM
+
+──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+❯ 
+──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+  ⏵⏵ auto mode on (shift+tab to cycle) · ← for agents

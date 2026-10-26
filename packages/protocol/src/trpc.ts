@@ -28,7 +28,8 @@ export interface Act {
 export interface BaseContext {
   /** Who is asking. */
   actor: Actor;
-  grants: ReadonlySet<Capability>;
+  /** Read on every call, so a revoked grant stops the very next one. */
+  grants: { has(c: Capability): boolean };
   journal: Journal;
 }
 
