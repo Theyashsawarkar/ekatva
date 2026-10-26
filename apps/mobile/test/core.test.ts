@@ -7,13 +7,13 @@ import type { LocalRouter } from "@ekatva/protocol";
 import { createTRPCClient, createWSClient, wsLink } from "@trpc/client";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import WebSocket from "ws";
-import { PhoneFiles } from "../src/core/files.js";
-import { MemoryKV } from "../src/core/kv.js";
-import { MemoryLines } from "../src/core/logStore.js";
-import type { DeviceApi } from "../src/core/services.js";
-import { type Platform, Session } from "../src/core/session.js";
-import { strength, Vault } from "../src/core/vault.js";
-import { MemFs } from "./memfs.js";
+import { PhoneFiles } from "../src/core/files";
+import { MemoryKV } from "../src/core/kv";
+import { MemoryLines } from "../src/core/logStore";
+import type { DeviceApi } from "../src/core/services";
+import { type Platform, Session } from "../src/core/session";
+import { strength, Vault } from "../src/core/vault";
+import { MemFs } from "./memfs";
 
 const PASSWORD = "correct horse battery 9!";
 const FAST = 2 ** 10; // scrypt cost for tests
@@ -55,8 +55,8 @@ function platform(): Platform & {
     kvMap: kv,
     files,
     lines: (name) => {
-      let l = files.get(name);
-      if (!l) files.set(name, (l = new MemoryLines()));
+      const l = files.get(name) ?? new MemoryLines();
+      files.set(name, l);
       return l;
     },
     fs: memfs,

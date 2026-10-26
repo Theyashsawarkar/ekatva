@@ -4,14 +4,14 @@
  * and the link. Built from a `Platform`, so tests can give it fakes.
  */
 import { toB64u } from "@ekatva/link";
-import { Journal, type JournalStore, Mirror } from "@ekatva/protocol";
-import { type Fs, PhoneFiles } from "./files.js";
-import type { KV } from "./kv.js";
-import { Laptops } from "./laptops.js";
-import { LinkManager, type Opener } from "./link.js";
-import { EncryptedStore, type Lines } from "./logStore.js";
-import { type DeviceApi, phoneServices } from "./services.js";
-import { type Secrets, Vault } from "./vault.js";
+import { Journal, type JournalStore, Mirror, type PhoneServices } from "@ekatva/protocol";
+import { type Fs, PhoneFiles } from "./files";
+import type { KV } from "./kv";
+import { Laptops } from "./laptops";
+import { LinkManager, type Opener } from "./link";
+import { EncryptedStore, type Lines } from "./logStore";
+import { type DeviceApi, phoneServices } from "./services";
+import { type Secrets, Vault } from "./vault";
 
 export interface Platform {
   kv: KV;
@@ -36,6 +36,7 @@ export class Session {
     readonly laptops: Laptops,
     readonly journal: Journal,
     readonly files: PhoneFiles,
+    readonly services: PhoneServices,
     readonly link: LinkManager,
   ) {}
 
@@ -79,7 +80,7 @@ export class Session {
       hello: { name: p.device.name, info: p.info },
       ...(p.onAlert ? { onAlert: p.onAlert } : {}),
     });
-    session = new Session(p, secrets, laptops, journal, files, link);
+    session = new Session(p, secrets, laptops, journal, files, services, link);
     return session;
   }
 

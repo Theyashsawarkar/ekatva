@@ -1,6 +1,6 @@
 /** The laptops this phone is paired with, and what each may do here. */
 import { CAPABILITIES, type Capability } from "@ekatva/protocol";
-import type { KV } from "./kv.js";
+import type { KV } from "./kv";
 
 export interface LaptopRecord {
   key: string;

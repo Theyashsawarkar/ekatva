@@ -1,4 +1,4 @@
-import type { Fs, FsStat } from "../src/core/files.js";
+import type { Fs, FsStat } from "../src/core/files";
 
 /** An in-memory filesystem: files hold base64-free strings for readability. */
 export class MemFs implements Fs {

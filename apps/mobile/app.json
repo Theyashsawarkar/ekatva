@@ -1,0 +1,55 @@
+{
+  "expo": {
+    "name": "ekatva",
+    "slug": "ekatva",
+    "version": "0.1.0",
+    "orientation": "portrait",
+    "icon": "./assets/images/icon.png",
+    "scheme": "ekatva",
+    "userInterfaceStyle": "dark",
+    "backgroundColor": "#191724",
+    "android": {
+      "package": "io.github.theyashsawarkar.ekatva",
+      "adaptiveIcon": {
+        "backgroundColor": "#191724",
+        "foregroundImage": "./assets/images/adaptive-foreground.png",
+        "monochromeImage": "./assets/images/adaptive-monochrome.png"
+      },
+      "permissions": [
+        "android.permission.CAMERA",
+        "android.permission.USE_BIOMETRIC",
+        "android.permission.VIBRATE",
+        "android.permission.WAKE_LOCK",
+        "android.permission.ACCESS_NETWORK_STATE",
+        "android.permission.MANAGE_EXTERNAL_STORAGE"
+      ],
+      "blockedPermissions": [
+        "android.permission.RECORD_AUDIO",
+        "android.permission.SYSTEM_ALERT_WINDOW"
+      ],
+      "allowBackup": false,
+      "predictiveBackGestureEnabled": false
+    },
+    "plugins": [
+      "expo-router",
+      [
+        "expo-splash-screen",
+        { "backgroundColor": "#191724", "image": "./assets/images/splash.png", "imageWidth": 120 }
+      ],
+      [
+        "expo-camera",
+        {
+          "cameraPermission": "ekatva reads your laptop's pairing code with the camera.",
+          "recordAudioAndroid": false
+        }
+      ],
+      ["expo-local-authentication", { "faceIDPermission": "ekatva uses Face ID to open." }],
+      ["expo-secure-store", { "configureAndroidBackup": false }],
+      [
+        "expo-build-properties",
+        { "android": { "usesCleartextTraffic": true, "minSdkVersion": 29 } }
+      ]
+    ],
+    "experiments": { "typedRoutes": true, "reactCompiler": true }
+  }
+}

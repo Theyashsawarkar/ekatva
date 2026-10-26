@@ -4,6 +4,27 @@ Newest first. Releases are tags (`vX.Y.Z`); every package's `version` moves toge
 
 ## Unreleased
 
+- The phone app's screens (Expo Router, rose-pine), bundled for Android:
+  - first run sets the app password (with a strength meter) and binds the
+    vault to the fingerprint; the password opens it once per start, the
+    fingerprint after 5 minutes in the background; risky actions (delete,
+    undo, sleep, granting a high-risk capability, forgetting the laptop)
+    ask for the fingerprint again.
+  - Home: what needs you first (agents' questions, with their options),
+    the laptop's battery, CPU and waiting agents, caffeine off / on /
+    high, lock and sleep.
+  - Agents: every session with its state; a session's live output, its
+    question, a reply box, interrupt; start a new session in a project
+    with a first prompt.
+  - Files: browse the laptop, preview text and images, download to the
+    phone, upload from it (in chunks), new folders, rename, delete.
+  - Log: the laptop's (from the copy kept on the phone, so it reads
+    offline) and the phone's, with the chain's state and undo.
+  - Settings: what the laptop may do on the phone, pairing, forgetting,
+    all-files access, lock, changing the password.
+  - Pairing: the camera reads the QR code, then the four emoji.
+  - The icon; Android backups off, so the vault and logs never leave the phone.
+
 - `@ekatva/mobile`, the phone's core (the UI comes next), tested end to end
   against a real daemon:
   - the vault: this phone's identity and log key, encrypted with a key

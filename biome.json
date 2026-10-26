@@ -38,6 +38,19 @@
           }
         }
       }
+    },
+    {
+      "includes": ["apps/mobile/src/**"],
+      "linter": {
+        "rules": {
+          "correctness": {
+            "noReactNativeRawText": "off"
+          },
+          "style": {
+            "noNonNullAssertion": "off"
+          }
+        }
+      }
     }
   ]
 }

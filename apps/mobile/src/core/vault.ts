@@ -14,7 +14,7 @@ import {
 } from "@ekatva/link";
 import { chacha20poly1305 } from "@noble/ciphers/chacha.js";
 import { scryptAsync } from "@noble/hashes/scrypt.js";
-import type { KV } from "./kv.js";
+import type { KV } from "./kv";
 
 const KEY = "ekatva.vault";
 /** scrypt cost: ~0.5 s on a phone, far more for anyone guessing. */
@@ -68,19 +68,19 @@ export function strength(password: string): { score: number; hint: string | null
   return { score: 4, hint: null };
 }
 
-export class Vault {
-  static async exists(kv: KV): Promise<boolean> {
+export const Vault = {
+  async exists(kv: KV): Promise<boolean> {
     return (await kv.get(KEY)) !== null;
-  }
+  },
 
-  static async create(kv: KV, password: string, n = N): Promise<Secrets> {
+  async create(kv: KV, password: string, n = N): Promise<Secrets> {
     if (strength(password).score < 3) throw new Error("choose a stronger password");
     const secrets: Secrets = { identity: generateKeyPair(), logKey: random(32) };
-    await Vault.seal(kv, password, secrets, n);
+    await this.seal(kv, password, secrets, n);
     return secrets;
-  }
+  },
 
-  static async open(kv: KV, password: string): Promise<Secrets> {
+  async open(kv: KV, password: string): Promise<Secrets> {
     const raw = await kv.get(KEY);
     if (!raw) throw new Error("not set up");
     const s = JSON.parse(raw) as Sealed;
@@ -93,15 +93,15 @@ export class Vault {
     }
     const j = JSON.parse(utf8.decode(plain));
     return { identity: keyPairFromSecret(fromB64u(j.identity)), logKey: fromB64u(j.logKey) };
-  }
+  },
 
-  static async changePassword(kv: KV, old: string, next: string, n = N): Promise<void> {
+  async changePassword(kv: KV, old: string, next: string, n = N): Promise<void> {
     const secrets = await Vault.open(kv, old);
     if (strength(next).score < 3) throw new Error("choose a stronger password");
-    await Vault.seal(kv, next, secrets, n);
-  }
+    await this.seal(kv, next, secrets, n);
+  },
 
-  private static async seal(kv: KV, password: string, secrets: Secrets, n: number): Promise<void> {
+  async seal(kv: KV, password: string, secrets: Secrets, n: number): Promise<void> {
     const salt = random(16);
     const nonce = random(12);
     const key = await derive(password, salt, n);
@@ -114,10 +114,10 @@ export class Vault {
     const box = chacha20poly1305(key, nonce, utf8.encode(KEY)).encrypt(plain);
     const sealed: Sealed = { v: 1, n, salt: toB64u(salt), nonce: toB64u(nonce), box: toB64u(box) };
     await kv.set(KEY, JSON.stringify(sealed));
-  }
+  },
 
   /** Erases everything (forgot the password): pair again afterwards. */
-  static async wipe(kv: KV): Promise<void> {
+  async wipe(kv: KV): Promise<void> {
     await kv.remove(KEY);
-  }
-}
+  },
+};

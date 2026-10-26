@@ -5,7 +5,7 @@
  */
 import type { Done, PhoneServices, PhoneStatus, Sms, Undo } from "@ekatva/protocol";
 import { TRPCError } from "@trpc/server";
-import type { PhoneFiles } from "./files.js";
+import type { PhoneFiles } from "./files";
 
 export interface DeviceApi {
   name: string;

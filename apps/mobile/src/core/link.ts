@@ -27,8 +27,8 @@ import {
   serveRouter,
 } from "@ekatva/protocol";
 import { createTRPCClient, createWSClient, type TRPCClient, wsLink } from "@trpc/client";
-import { type LaptopRecord, type Laptops, PHONE_DEFAULT } from "./laptops.js";
-import type { Secrets } from "./vault.js";
+import { type LaptopRecord, type Laptops, PHONE_DEFAULT } from "./laptops";
+import type { Secrets } from "./vault";
 
 /** Opens a WebSocket to `url`, as a transport, or fails within `timeoutMs`. */
 export type Opener = (url: string, timeoutMs: number) => Promise<Transport>;
