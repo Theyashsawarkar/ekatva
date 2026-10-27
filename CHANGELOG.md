@@ -4,6 +4,17 @@ Newest first. Releases are tags (`vX.Y.Z`); every package's `version` moves toge
 
 ## Unreleased
 
+- Fix: finding each other from elsewhere could stop for good. An ntfy
+  request that never answered froze the laptop's mailbox check (and the
+  phone's "where are you?"); every request now gives up after 15 s, and the
+  daemon logs when the rendezvous is unreachable and when it's back.
+
+- `ekatva mcp`: an MCP server for AI agents (Claude Code and any MCP
+  client). Status, ring, lock, SMS, calls, the phone's clipboard and files,
+  caffeine, the log. `sms_send` and `call_dial` ask you in an Allow/Decline
+  dialog first; what other people wrote comes back in `<untrusted>` blocks.
+  The log names the agent (`yash via claude`, from `EKATVA_AGENT`).
+
 - The desktop window is the place to pair: its QR code goes through the
   tunnel (any network) and shows the tunnel URL; clicking the "wants to
   pair" notification opens the window on the request (`ekatva window pair`,

@@ -75,4 +75,16 @@ describe("rendezvous", () => {
     expect(got.map((m) => a.open(m.message)?.t)).toEqual(["where"]);
     server.close();
   });
+
+  it("gives up on a server that never answers", async () => {
+    // Accepts the request and never replies: a fetch with no timeout would wait for ever.
+    const server = createServer(() => undefined);
+    await new Promise<void>((r) => server.listen(0, "127.0.0.1", () => r()));
+    const port = (server.address() as { port: number }).port;
+    const ntfy = new Ntfy(`http://127.0.0.1:${port}`, undefined, 200);
+    await expect(ntfy.poll("t")).rejects.toThrow("no answer in 0.2 s");
+    await expect(ntfy.publish("t", "x")).rejects.toThrow("no answer in 0.2 s");
+    server.closeAllConnections();
+    server.close();
+  });
 });

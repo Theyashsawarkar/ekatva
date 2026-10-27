@@ -80,10 +80,24 @@ export class Ntfy {
   constructor(
     readonly server = "https://ntfy.sh",
     private readonly fetchFn: typeof fetch = globalThis.fetch.bind(globalThis),
+    /** A request that hangs would stall finding each other for good: give up and try again. */
+    private readonly timeoutMs = 15_000,
   ) {}
 
+  private async request(url: string, init: RequestInit = {}): Promise<Response> {
+    const abort = new AbortController();
+    const timer = setTimeout(() => abort.abort(), this.timeoutMs);
+    try {
+      return await this.fetchFn(url, { ...init, signal: abort.signal });
+    } catch (e) {
+      throw abort.signal.aborted ? new Error(`ntfy: no answer in ${this.timeoutMs / 1000} s`) : e;
+    } finally {
+      clearTimeout(timer);
+    }
+  }
+
   async publish(topic: string, message: string): Promise<void> {
-    const r = await this.fetchFn(`${this.server}/${topic}`, {
+    const r = await this.request(`${this.server}/${topic}`, {
       method: "POST",
       body: message,
       headers: { "X-Cache": "no" },
@@ -93,7 +107,7 @@ export class Ntfy {
 
   /** Messages since `since` (an ntfy id, or a duration like "10m"). */
   async poll(topic: string, since = "10m"): Promise<{ id: string; message: string }[]> {
-    const r = await this.fetchFn(
+    const r = await this.request(
       `${this.server}/${topic}/json?poll=1&since=${encodeURIComponent(since)}`,
     );
     if (!r.ok) throw new Error(`ntfy: ${r.status}`);
