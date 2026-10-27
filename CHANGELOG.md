@@ -4,6 +4,14 @@ Newest first. Releases are tags (`vX.Y.Z`); every package's `version` moves toge
 
 ## Unreleased
 
+- Fix: the phone's Settings showed its features (calls, messages,
+  notifications, lock, all files) as off after you allowed them on
+  Android's own pages. The switches now read the state again when the app
+  comes back and every 2 s while on screen; "Stay linked in the background"
+  shows whether notifications are really allowed (it always said on).
+- The phone logs its link's state changes and rendezvous attempts to
+  logcat (`[ekatva link]`), never keys or tokens.
+
 - Fix: finding each other from elsewhere could stop for good. An ntfy
   request that never answered froze the laptop's mailbox check (and the
   phone's "where are you?"); every request now gives up after 15 s, and the

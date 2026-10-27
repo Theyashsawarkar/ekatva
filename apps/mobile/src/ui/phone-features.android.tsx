@@ -1,6 +1,6 @@
 /** Turning on what the laptop may use of this phone, one Android permission at a time. */
-import { useState } from "react";
-import { PermissionsAndroid, Switch, View } from "react-native";
+import { useEffect, useState } from "react";
+import { AppState, PermissionsAndroid, Platform, Switch, View } from "react-native";
 import { phone } from "../../modules/ekatva-phone";
 import { Card, T } from "./kit";
 import { c } from "./theme";
@@ -12,8 +12,30 @@ async function ask(perms: string[]): Promise<boolean> {
   return Object.values(r).every((v) => v === PermissionsAndroid.RESULTS.GRANTED);
 }
 
+/** Android 13+ asks before an app may show notifications; older ones always let it. */
+const canNotify = () =>
+  Number(Platform.Version) < 33
+    ? Promise.resolve(true)
+    : PermissionsAndroid.check(P.POST_NOTIFICATIONS);
+
 export function PhoneFeatures() {
   const [, bump] = useState(0);
+  const [notify, setNotify] = useState(true);
+  // Most of these are granted on Android's own settings pages, not here: read them again
+  // when the app comes back to the front, and every few seconds while this is on screen.
+  useEffect(() => {
+    const again = () => {
+      bump((n) => n + 1);
+      void canNotify().then(setNotify);
+    };
+    again();
+    const sub = AppState.addEventListener("change", (s) => s === "active" && again());
+    const timer = setInterval(again, 2000);
+    return () => {
+      sub.remove();
+      clearInterval(timer);
+    };
+  }, []);
   if (!phone) {
     return (
       <Card>
@@ -73,7 +95,7 @@ export function PhoneFeatures() {
     {
       title: "Stay linked in the background",
       detail: "an ongoing notification keeps the link up when the app is closed",
-      on: true,
+      on: notify,
       enable: () => ask([P.POST_NOTIFICATIONS]),
     },
   ];

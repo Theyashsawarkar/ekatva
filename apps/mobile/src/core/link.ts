@@ -83,6 +83,9 @@ export class LinkManager {
   }
 
   private set(s: LinkState): void {
+    // To logcat (ReactNativeJS), for finding out why a link won't come up. Never keys or tokens.
+    if (s.status !== this.state?.status || ("error" in s && s.error))
+      console.info(`[ekatva link] ${s.status}${"error" in s && s.error ? `: ${s.error}` : ""}`);
     this.state = s;
     for (const cb of this.listeners) cb(s);
   }
@@ -224,6 +227,7 @@ export class LinkManager {
     const mb = mailbox(this.d.secrets.identity, fromB64u(laptop.key));
     const n = nonce();
     try {
+      console.info("[ekatva link] asking the rendezvous where the laptop is");
       await this.d.ntfy.publish(mb.topic, mb.seal({ t: "where", at: this.now(), n }));
       const until = this.now() + (this.d.rendezvousWaitMs ?? 45_000);
       while (this.now() < until && this.wanted) {
@@ -233,9 +237,11 @@ export class LinkManager {
           if (msg?.t === "here" && msg.n === n) return { url: msg.url, lan: msg.lan };
         }
       }
-    } catch {
+    } catch (e) {
       // no internet either
+      console.info(`[ekatva link] rendezvous failed: ${(e as Error).message}`);
     }
+    console.info("[ekatva link] the laptop didn't answer the rendezvous");
     return null;
   }
 
