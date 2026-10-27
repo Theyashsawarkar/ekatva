@@ -22,7 +22,7 @@
   "dependencies": {
     "@ekatva/link": "workspace:*",
     "@ekatva/protocol": "workspace:*",
-    "@modelcontextprotocol/sdk": "1.32.1",
+    "@modelcontextprotocol/sdk": "1.32.2",
     "@noble/hashes": "2.4.0",
     "@trpc/client": "11.19.0",
     "@trpc/server": "11.19.0",
