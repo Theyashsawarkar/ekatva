@@ -800,8 +800,9 @@ export class Daemon {
     applyWSSHandler({
       wss: this.localWss,
       router: localRouter,
-      createContext: (): LaptopContext => ({
-        actor: { key: "local", name: me },
+      createContext: ({ info }): LaptopContext => ({
+        // `ekatva mcp` names its agent, so the log says who did it.
+        actor: { key: "local", name: agentLabel(me, info.connectionParams?.agent) },
         grants: { has: (_c: Capability) => true },
         journal: this.journal,
         services: this.services,
@@ -838,3 +839,15 @@ export class Daemon {
 }
 
 export { LinkError, VERSION };
+
+/** "yash" or "yash via claude": the local user, and the agent acting for them if one said so. */
+export function agentLabel(user: string, agent: unknown): string {
+  const name =
+    typeof agent === "string"
+      ? agent
+          .replace(/[^\w .@-]/g, "")
+          .trim()
+          .slice(0, 40)
+      : "";
+  return name ? `${user} via ${name}` : user;
+}

@@ -35,7 +35,12 @@ export default defineConfig({
         { label: "Security", items: ["security/model", "security/crypto", "security/threats"] },
         {
           label: "Guides",
-          items: ["guides/capabilities", "guides/development", "guides/kde-connect"],
+          items: [
+            "guides/capabilities",
+            "guides/ai-agents",
+            "guides/development",
+            "guides/kde-connect",
+          ],
         },
         {
           label: "Reference",

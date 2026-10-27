@@ -46,6 +46,14 @@ anything but ciphertext.
 
 ## Features
 
+### For your AI agents, on the laptop
+
+- **`ekatva mcp`**: Claude Code (or any MCP client) can check the phone,
+  ring or lock it, read SMS, use its clipboard and files. Sending an SMS
+  or placing a call waits for you to allow it on the laptop; everything is
+  in the action log under the agent's name.
+  [For AI agents](https://theyashsawarkar.github.io/ekatva/guides/ai-agents/).
+
 ### From the phone, on the laptop
 
 - **Agents.** Every Claude Code session (and other agents in tmux): what

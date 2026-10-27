@@ -6,6 +6,7 @@ description: "Every command."
 | Command | What it does |
 |---|---|
 | `ekatva pair [--grants PRESET] [--lan] [--window]` | Shows a QR code that works from any network, through a tunnel (`--lan`: this Wi-Fi only; `--window`: as an image in a window); asks you to confirm the emoji. |
+| `ekatva mcp` | An MCP server on stdio for AI agents (`EKATVA_AGENT=name` labels the log); see [For AI agents](/ekatva/guides/ai-agents/). |
 | `ekatva devices` | Paired phones, online or when last seen, and what each may do. |
 | `ekatva grant DEVICE PRESET\|CAP,…` | Changes what a phone may do (logged, undoable). |
 | `ekatva unpair DEVICE` | Forgets a phone and drops its connection (undoable). |

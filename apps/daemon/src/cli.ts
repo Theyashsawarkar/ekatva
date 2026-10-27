@@ -42,6 +42,7 @@ const HELP = `ekatva ${VERSION}: your phone and your laptop as one device
   ekatva agents                   AI agent sessions in tmux
   ekatva window [TAB]             open the desktop window (phones, pair, log, caffeine, phone)
   ekatva daemon                   run the service (systemd does this)
+  ekatva mcp                      an MCP server on stdio, for AI agents (EKATVA_AGENT=name)
 
 Presets: ${Object.keys(PRESETS).join(", ")}
 Capabilities: ${Object.keys(CAPABILITIES)
@@ -230,6 +231,11 @@ async function main(argv: string[]): Promise<void> {
     await openWindow(rest[0]).catch((e: Error) => fail(e.message));
     return;
   }
+  if (cmd === "mcp") {
+    const { serveMcp } = await import("./mcp.js");
+    await serveMcp();
+    return;
+  }
   if (cmd === "daemon") {
     const config = loadConfig();
     const { key, where } = await loadIdentity(dirs.state(), (m) => console.error(m));
@@ -414,7 +420,7 @@ const argv = process.argv.slice(2);
 main(argv).then(
   () => {
     // The daemon runs on; a command is done once it has printed.
-    if (argv[0] !== "daemon") process.exit(process.exitCode ?? 0);
+    if (argv[0] !== "daemon" && argv[0] !== "mcp") process.exit(process.exitCode ?? 0);
   },
   (e) => fail((e as Error).message),
 );

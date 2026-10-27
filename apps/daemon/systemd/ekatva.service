@@ -3,11 +3,15 @@ Description=ekatva: your phone and your laptop as one device
 Documentation=https://theyashsawarkar.github.io/ekatva/
 PartOf=graphical-session.target
 After=graphical-session.target
+# Keep trying: a crash loop backs off to a minute instead of giving up.
+StartLimitIntervalSec=0
 
 [Service]
 ExecStart=%h/.local/bin/ekatva daemon
 Restart=on-failure
 RestartSec=3
+RestartSteps=5
+RestartMaxDelaySec=60
 # The keys and the log are yours alone.
 UMask=0077
 NoNewPrivileges=yes

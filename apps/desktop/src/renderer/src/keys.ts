@@ -4,13 +4,13 @@
  * # keybind: Ekatva/window | 1 2 3 4 | Switch to tab (Phones, Log, Caffeine, Phone)
  * # keybind: Ekatva/window | j k | Move selection down or up
  * # keybind: Ekatva/window | g G | Jump to the first or last item
- * # keybind: Ekatva/window | p | Pair a phone (show the QR code)
- * # keybind: Ekatva/window | Enter | Confirm the pairing (when the emoji match)
- * # keybind: Ekatva/window | x | Refuse the pairing request
+ * # keybind: Ekatva/window | p | Show pairing code (pair a phone, from any network)
+ * # keybind: Ekatva/window | Enter | Confirm pairing request (when the emoji match)
+ * # keybind: Ekatva/window | x | Cancel pairing request (refuse the phone)
  * # keybind: Ekatva/window | Esc | Close the pairing code or this help
  * # keybind: Ekatva/window | u | Undo the selected log entry
  * # keybind: Ekatva/window | o i h | Set caffeine (off, on, high)
- * # keybind: Ekatva/window | r | Ring the phone
+ * # keybind: Ekatva/window | r | Start phone ring (find the phone)
  * # keybind: Ekatva/window | ? | Show the keys
  */
 import { useEffect } from "react";
