@@ -4,6 +4,10 @@ Newest first. Releases are tags (`vX.Y.Z`); every package's `version` moves toge
 
 ## Unreleased
 
+- Fix: "Lock from the laptop" could never be turned on. The phone opened
+  Android's device-admin page as a new task, which Android refuses (it
+  closed at once). System pages now open on top of the app's screen.
+
 - Fix: the phone's Settings showed its features (calls, messages,
   notifications, lock, all files) as off after you allowed them on
   Android's own pages. The switches now read the state again when the app
