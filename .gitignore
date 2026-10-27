@@ -3,8 +3,6 @@ dist/
 out/
 .turbo/
 .expo/
-android/
-ios/
 *.log
 .env*
 .astro/

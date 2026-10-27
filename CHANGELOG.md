@@ -4,6 +4,12 @@ Newest first. Releases are tags (`vX.Y.Z`); every package's `version` moves toge
 
 ## Unreleased
 
+- Fix: the phone's native module (`apps/mobile/modules/ekatva-phone/android`:
+  the Kotlin code, its manifest, build.gradle, the device-admin policy) was
+  never in the repository: a root `.gitignore` rule `android/` matched it.
+  Only the generated `apps/mobile/android/` and the module's `build/` are
+  ignored now, so a fresh clone can build the app.
+
 - Fix: "Lock from the laptop" could never be turned on. The phone opened
   Android's device-admin page as a new task, which Android refuses (it
   closed at once). System pages now open on top of the app's screen.

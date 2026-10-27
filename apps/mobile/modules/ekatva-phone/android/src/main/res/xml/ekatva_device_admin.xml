@@ -1,0 +1,7 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Only what locking needs: nothing else of device admin. -->
+<device-admin>
+  <uses-policies>
+    <force-lock />
+  </uses-policies>
+</device-admin>
