@@ -81,7 +81,11 @@ ipcMain.on("ekatva:connect", (event) => {
 
 if (!app.requestSingleInstanceLock()) app.quit();
 else {
-  app.on("second-instance", () => {
+  app.on("second-instance", (_e, argv) => {
+    // `ekatva window pair` while the window is open: go to that screen.
+    const tab = argv.find((a) => a.startsWith("--tab="))?.slice(6);
+    if (win && tab)
+      void win.loadFile(join(import.meta.dirname, "../renderer/index.html"), { query: { tab } });
     if (win?.isMinimized()) win.restore();
     win?.focus();
   });

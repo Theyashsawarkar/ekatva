@@ -1,0 +1,11 @@
+[Desktop Entry]
+Type=Application
+Name=ekatva
+GenericName=Phone and laptop
+Comment=Pair your phone, see what it may do, the action log, caffeine
+Exec=ekatva window %U
+Icon=ekatva
+Terminal=false
+Categories=Utility;Network;
+Keywords=phone;pair;android;kde connect;
+StartupWMClass=ekatva

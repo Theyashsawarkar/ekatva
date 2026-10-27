@@ -25,6 +25,17 @@ systemctl --user enable --now ekatva
 ekatva status
 ```
 
+The window (pairing, your phones, the log, caffeine) goes in your app launcher
+with:
+
+```sh
+cp apps/desktop/ekatva.desktop ~/.local/share/applications/
+install -Dm644 apps/mobile/assets/src/icon.svg ~/.local/share/icons/hicolor/scalable/apps/ekatva.svg
+```
+
+Open it from the launcher or with `ekatva window`; `ekatva window pair` opens
+straight on pairing.
+
 The daemon listens on port 47100 on your local network and announces itself
 with mDNS, so the phone finds it. Nothing gets in without a paired key; see
 [the security model](/ekatva/security/model/).

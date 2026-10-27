@@ -27,10 +27,12 @@ const ago = (ms: number | null) => {
 };
 
 export function App() {
-  const initial = (new URLSearchParams(location.search).get("tab") as Tab | null) ?? "phones";
+  // `ekatva window pair` (and the pairing notification) opens straight on the pairing screen.
+  const asked = new URLSearchParams(location.search).get("tab");
+  const initial = asked === "pair" ? "phones" : ((asked as Tab | null) ?? "phones");
   const [tab, setTab] = useState<Tab>(initial);
   const [help, setHelp] = useState(false);
-  const [pairing, setPairing] = useState(initial === "phones" && location.search.includes("pair"));
+  const [pairing, setPairing] = useState(asked === "pair");
   const devices = useSub<Device[]>(
     (on) => api.admin.devices.watch.subscribe(undefined, { onData: on }),
     [],
@@ -275,7 +277,12 @@ function Grants({
 }
 
 function Pair({ onClose }: { onClose: () => void }) {
-  const [offer, setOffer] = useState<{ uri: string; expires: number; lan: string[] } | null>(null);
+  const [offer, setOffer] = useState<{
+    uri: string;
+    expires: number;
+    lan: string[];
+    url: string | null;
+  } | null>(null);
   const [qr, setQr] = useState<string | null>(null);
   const [now, setNow] = useState(Date.now());
   const [error, setError] = useState<string | null>(null);
@@ -288,13 +295,16 @@ function Pair({ onClose }: { onClose: () => void }) {
 
   const fresh = () => {
     setError(null);
-    api.admin.pair.start.mutate({ away: false }).then(
+    setOffer(null);
+    setQr(null);
+    // Through a tunnel: the phone is usually on mobile data or another Wi-Fi.
+    api.admin.pair.start.mutate({ away: true }).then(
       async (o) => {
         setOffer(o);
         setQr(
           await QRCode.toDataURL(o.uri, {
             margin: 1,
-            width: 280,
+            width: 400,
             color: { dark: "#111019", light: "#ffffff" },
           }),
         );
@@ -358,13 +368,17 @@ function Pair({ onClose }: { onClose: () => void }) {
         <div className="qrbox">
           {qr ? <img src={qr} alt="Pairing code" /> : <div className="qrph" />}
           <div>
-            <p>Scan this with the ekatva app.</p>
+            <p>{qr ? "Scan this with the ekatva app." : "Opening a tunnel…"}</p>
             <p className="dim">
               {left > 0
                 ? `Works once, for ${Math.floor(left / 60)}:${String(left % 60).padStart(2, "0")} more.`
                 : "Expired."}
             </p>
+            <p className="dim small">
+              {offer?.url ? "Works from any network (mobile data too)." : "Same Wi-Fi only."}
+            </p>
             <p className="dim small mono">{offer?.lan.join(", ") || "no network address"}</p>
+            {offer?.url ? <p className="dim small mono">{offer.url}</p> : null}
             {left === 0 ? (
               <button type="button" className="primary" onClick={fresh}>
                 New code

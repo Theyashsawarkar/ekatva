@@ -2,7 +2,9 @@
  * ekatva: the command line. `ekatva daemon` is the service; everything
  * else talks to it over its local socket.
  */
-import { existsSync } from "node:fs";
+import { spawn } from "node:child_process";
+import { chmodSync, existsSync, rmSync } from "node:fs";
+import { join } from "node:path";
 import { createInterface } from "node:readline/promises";
 import {
   CAPABILITIES,
@@ -20,10 +22,15 @@ import { loadIdentity } from "./identity.js";
 import { dirs, socketPath } from "./paths.js";
 import { run } from "./services/system.js";
 
+/** How long `pair` waits past the code's expiry for a phone that got in at the last moment. */
+const PAIR_GRACE_MS = 20_000;
+
 const HELP = `ekatva ${VERSION}: your phone and your laptop as one device
 
-  ekatva pair [--grants PRESET] [--away]
-                                  show a QR code for the phone to scan (--away: from anywhere)
+  ekatva pair [--grants PRESET] [--lan] [--window]
+                                  show a QR code for the phone to scan, through a tunnel so it
+                                  works from any network (--lan: this Wi-Fi only;
+                                  --window: in an image window, for terminals that blur it)
   ekatva devices                  paired phones, online or not
   ekatva grant DEVICE WHAT        what a phone may do: a preset or capabilities
   ekatva unpair DEVICE            forget a phone (undoable)
@@ -33,7 +40,7 @@ const HELP = `ekatva ${VERSION}: your phone and your laptop as one device
   ekatva caffeine [off|on|high] [--for MIN]
   ekatva status [--json|--waybar]
   ekatva agents                   AI agent sessions in tmux
-  ekatva window [TAB]             open the desktop window (phones, log, caffeine, phone)
+  ekatva window [TAB]             open the desktop window (phones, pair, log, caffeine, phone)
   ekatva daemon                   run the service (systemd does this)
 
 Presets: ${Object.keys(PRESETS).join(", ")}
@@ -82,45 +89,101 @@ async function pair(
   api: ReturnType<typeof client>["api"],
   preset: string,
   away: boolean,
+  window: boolean,
 ): Promise<void> {
   const grants = preset in PRESETS ? [...PRESETS[preset as Preset]] : fail(`no preset "${preset}"`);
   const offer = await api.admin.pair.start.mutate({ away });
-  const qr = await import("qrcode-terminal");
-  qr.default.generate(offer.uri, { small: true }, (s: string) => process.stdout.write(`${s}\n`));
-  process.stdout.write(
-    `Scan this with the ekatva app. It works once, for 2 minutes.\n${offer.lan.length ? `On this network at ${offer.lan.join(", ")}` : "No network address found: is Wi-Fi on?"}${offer.url ? `\nFrom anywhere through ${offer.url}` : ""}\n\nWaiting for the phone…\n`,
-  );
-  const pending = await new Promise<{ id: string; name: string; sas: string[] }>(
-    (resolve, reject) => {
-      const timer = setTimeout(
-        () => reject(new Error("no phone came in 2 minutes; run it again")),
-        offer.expires - Date.now(),
-      );
-      const sub = api.admin.pair.pending.subscribe(undefined, {
-        onData: (list) => {
-          if (list[0]) {
-            clearTimeout(timer);
-            sub.unsubscribe();
-            resolve(list[0]);
-          }
-        },
-        onError: reject,
-      });
-    },
-  );
-  process.stdout.write(
-    `\n${pending.name} is asking to pair. It should show:\n\n      ${pending.sas.join("   ")}\n\n`,
-  );
+  // The QR holds the one-time token: the image lives in the 0700 runtime dir, 0600, and goes when pairing ends.
+  const png = join(dirs.runtime(), "ekatva-pair.png");
+  let viewer: ReturnType<typeof spawn> | undefined;
+  if (window) {
+    await run("qrencode", ["-o", png, "-s", "12", "-m", "4"], offer.uri);
+    chmodSync(png, 0o600);
+    viewer = spawn("swayimg", [png], { stdio: "ignore" });
+  } else {
+    const qr = await import("qrcode-terminal");
+    qr.default.generate(offer.uri, { small: true }, (s: string) => process.stdout.write(`${s}\n`));
+  }
+  const cleanup = () => {
+    viewer?.kill();
+    rmSync(png, { force: true });
+  };
+  try {
+    process.stdout.write(
+      `Scan this with the ekatva app. It works once, for 2 minutes.\n${offer.lan.length ? `On this network at ${offer.lan.join(", ")}` : "No network address found: is Wi-Fi on?"}${offer.url ? `\nFrom anywhere through ${offer.url}` : ""}\n\nWaiting for the phone…\n`,
+    );
+    const pending = await new Promise<{ id: string; name: string; sas: string[] }>(
+      (resolve, reject) => {
+        // A phone that got in just before the code expired is still waiting for an answer.
+        const timer = setTimeout(
+          () => reject(new Error("no phone came in 2 minutes; run it again")),
+          offer.expires - Date.now() + PAIR_GRACE_MS,
+        );
+        const sub = api.admin.pair.pending.subscribe(undefined, {
+          onData: (list) => {
+            if (list[0]) {
+              clearTimeout(timer);
+              sub.unsubscribe();
+              resolve(list[0]);
+            }
+          },
+          onError: reject,
+        });
+      },
+    );
+    viewer?.kill();
+    process.stdout.write(
+      `\n${pending.name} is asking to pair. It should show:\n\n      ${pending.sas.join("   ")}\n\n`,
+    );
+    const ok = await decide(pending, window);
+    await api.admin.pair.confirm.mutate({ id: pending.id, accept: ok, grants });
+    process.stdout.write(
+      ok
+        ? `Paired ${pending.name} (${preset}). Change it with: ekatva grant "${pending.name}" …\n`
+        : "Refused.\n",
+    );
+  } finally {
+    cleanup();
+  }
+}
+
+/** Asks whether the emoji match: in the terminal, and with --window also in a dialog; the first answer wins. */
+async function decide(pending: { name: string; sas: string[] }, window: boolean): Promise<boolean> {
+  const stop = new AbortController();
   const rl = createInterface({ input: process.stdin, output: process.stdout });
-  const answer = (await rl.question("Do they match? [y/N] ")).trim().toLowerCase();
-  rl.close();
-  const ok = answer === "y" || answer === "yes";
-  await api.admin.pair.confirm.mutate({ id: pending.id, accept: ok, grants });
-  process.stdout.write(
-    ok
-      ? `Paired ${pending.name} (${preset}). Change it with: ekatva grant "${pending.name}" …\n`
-      : "Refused.\n",
-  );
+  const typed = rl
+    .question("Do they match? [y/N] ", { signal: stop.signal })
+    .then((a) => ["y", "yes"].includes(a.trim().toLowerCase()));
+  const answers = [typed];
+  let dialog: ReturnType<typeof spawn> | undefined;
+  if (window) {
+    dialog = spawn(
+      "zenity",
+      [
+        "--question",
+        "--title=ekatva: pair a phone",
+        `--text=<big>${pending.sas.join("  ")}</big>\n\nDoes ${pending.name.replace(/[<>&]/g, "")} show these four?\nPair only if they match.`,
+        "--ok-label=Pair",
+        "--cancel-label=Refuse",
+        "--icon=phone",
+      ],
+      { stdio: "ignore" },
+    );
+    answers.push(
+      new Promise((resolve) => {
+        dialog?.on("exit", (code) => resolve(code === 0));
+        dialog?.on("error", () => undefined);
+      }),
+    );
+  }
+  try {
+    return await Promise.race(answers);
+  } finally {
+    stop.abort();
+    rl.close();
+    dialog?.kill();
+    typed.catch(() => undefined);
+  }
 }
 
 /**
@@ -136,7 +199,7 @@ async function openWindow(tab: string | undefined): Promise<void> {
     process.env.EKATVA_DESKTOP ?? join(dirname(fileURLToPath(import.meta.url)), "../../desktop");
   const electron = join(desktop, "node_modules/electron/dist/electron");
   if (!existsSync(electron) || !existsSync(join(desktop, "out/main/index.js")))
-    fail(`the desktop window isn't built (${desktop}); run pnpm build`);
+    throw new Error(`the desktop window isn't built (${desktop}); run pnpm build`);
   const env = { ...process.env };
   const preload = (env.LD_PRELOAD ?? "")
     .split(/[: ]/)
@@ -148,7 +211,9 @@ async function openWindow(tab: string | undefined): Promise<void> {
     "--ozone-platform-hint=auto",
     ...(tab ? [`--tab=${tab}`] : []),
   ];
-  spawn(electron, args, { env, detached: true, stdio: "ignore" }).unref();
+  const child = spawn(electron, args, { env, detached: true, stdio: "ignore" });
+  child.on("error", () => undefined);
+  child.unref();
 }
 
 async function main(argv: string[]): Promise<void> {
@@ -162,20 +227,30 @@ async function main(argv: string[]): Promise<void> {
     return;
   }
   if (cmd === "window") {
-    await openWindow(rest[0]);
+    await openWindow(rest[0]).catch((e: Error) => fail(e.message));
     return;
   }
   if (cmd === "daemon") {
     const config = loadConfig();
     const { key, where } = await loadIdentity(dirs.state(), (m) => console.error(m));
-    const notify = (title: string, body: string, urgent?: boolean) =>
-      void run("notify-send", [
-        "-a",
-        "ekatva",
-        ...(urgent ? ["-u", "critical"] : []),
-        title,
-        body,
-      ]).catch(() => undefined);
+    const notify = (title: string, body: string, urgent?: boolean, open?: string) => {
+      const args = ["-a", "ekatva", ...(urgent ? ["-u", "critical"] : []), title, body];
+      if (!open) {
+        void run("notify-send", args).catch(() => undefined);
+        return;
+      }
+      // Clicking opens the window there; the answer itself is given in the window.
+      const n = spawn("notify-send", ["-A", "default=Open", ...args], {
+        stdio: ["ignore", "pipe", "ignore"],
+      });
+      let out = "";
+      n.stdout.on("data", (b) => (out += String(b)));
+      n.on("exit", () => {
+        if (out.trim() === "default")
+          void openWindow(open).catch((e: Error) => console.error(e.message));
+      });
+      n.on("error", () => undefined);
+    };
     const d = new Daemon({
       config,
       key,
@@ -201,7 +276,13 @@ async function main(argv: string[]): Promise<void> {
   try {
     switch (cmd) {
       case "pair":
-        await pair(api, flag("--grants") ?? "everything-but-root", rest.includes("--away"));
+        await pair(
+          api,
+          flag("--grants") ?? "everything-but-root",
+          // The phone and laptop are rarely on the same network: tunnel unless told not to.
+          !rest.includes("--lan"),
+          rest.includes("--window"),
+        );
         break;
       case "devices": {
         const list = await api.admin.devices.list.query();

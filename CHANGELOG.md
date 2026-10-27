@@ -4,6 +4,38 @@ Newest first. Releases are tags (`vX.Y.Z`); every package's `version` moves toge
 
 ## Unreleased
 
+- The desktop window is the place to pair: its QR code goes through the
+  tunnel (any network) and shows the tunnel URL; clicking the "wants to
+  pair" notification opens the window on the request (`ekatva window pair`,
+  which also works when the window is already open). A launcher entry
+  (`apps/desktop/ekatva.desktop`). Opening the window from the daemon can no
+  longer stop the daemon when the window isn't built.
+
+- Pairing: `ekatva pair` waits 20 s past the code's expiry, so a phone that
+  got in at the last moment can still be confirmed (it used to quit and leave
+  the phone waiting with nowhere to answer). With `--window` a Pair/Refuse
+  dialog (zenity) shows the emoji as soon as the phone asks; the terminal
+  prompt works too, and the first answer wins. The pairing notification says
+  where to answer.
+
+- `ekatva pair` now always goes through a tunnel (cloudflared by default),
+  so the phone pairs from mobile data or another Wi-Fi; `--lan` keeps it to
+  the local network. `--away` is gone (it is the default).
+
+- Pairing screen on the phone: the camera fills the screen with a square
+  viewfinder in the middle; "Connecting…" while it pairs. A failed attempt
+  now stops and says why with a "Scan again" button, instead of rescanning
+  the same code and flashing an error. When the laptop can't be reached
+  the error says so (and asks whether the phone is on the same Wi-Fi).
+
+- `ekatva pair --window` shows the QR as a sharp image in a window
+  (`qrencode` + `swayimg`) for terminals whose fonts blur the block QR.
+  The image is 0600 in the runtime dir and is removed when pairing ends.
+
+- Fix: the QR scanner did nothing in release builds. R8 stripped ML Kit's
+  barcode classes (`Failed to initialize BarcodeAnalyzer`); keep rules
+  for ML Kit now go in through `expo-build-properties`.
+
 - Media from the phone: what the laptop is playing (any MPRIS player:
   nāda, drishya, browsers), with its cover and position; play, pause,
   skip, seek; the volume and mute (PipeWire) and the screen's brightness.

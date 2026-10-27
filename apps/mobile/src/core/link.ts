@@ -97,13 +97,13 @@ export class LinkManager {
   /** Pairs with the laptop in the QR code; `onSas` gets the four emoji to show. */
   async pair(uri: string, onSas: (emoji: string[]) => void): Promise<LaptopRecord> {
     const offer = parseOffer(uri);
-    let last: unknown = new Error("the code has no address to reach the laptop at");
-    for (const { url, via } of this.urls(offer.lan, offer.url ?? null)) {
+    const urls = this.urls(offer.lan, offer.url ?? null);
+    if (!urls.length) throw new Error("the code has no address to reach the laptop at");
+    for (const { url, via } of urls) {
       let t: Transport;
       try {
         t = await this.d.open(url, 4000);
-      } catch (e) {
-        last = e;
+      } catch {
         continue;
       }
       const { channel, welcome } = await connect(t, {
@@ -132,7 +132,10 @@ export class LinkManager {
       this.wanted = true;
       return record;
     }
-    throw last;
+    throw new Error(
+      `Can't reach ${offer.name} at ${offer.lan.join(", ") || "its tunnel"}. Is the phone on the same Wi-Fi as the laptop?` +
+        (offer.url ? "" : " (Or pair without `--lan`, to go through a tunnel.)"),
+    );
   }
 
   /** Keep connected from now on. */

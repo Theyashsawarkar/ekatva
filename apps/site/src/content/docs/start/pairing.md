@@ -7,9 +7,20 @@ description: "One QR code, four emoji, done."
 ekatva pair
 ```
 
+Or open the **ekatva** window and press **Pair a phone** (<kbd>p</kbd>): it's
+the easiest way, and it shows the request and the emoji when the phone asks.
+If the window is closed, the "wants to pair" notification opens it when you
+click it.
+
 The terminal (or the desktop window) shows a QR code. Scan it with the ekatva
 app. Both screens then show the same **four emoji**; if they match, confirm on
 the laptop. That's it: from now on the two recognise each other by their keys.
+
+If your phone can't read the terminal's QR code (some fonts blur it), run
+`ekatva pair --window`: it shows the code as a sharp image in a window
+(needs `qrencode` and `swayimg`). When the phone asks, the QR window closes
+and a **Pair / Refuse** dialog shows the four emoji (needs `zenity`); you can
+also answer in the terminal.
 
 ## What the QR code holds
 
@@ -32,8 +43,11 @@ is spent). You only confirm what you can see on both screens.
 
 ## From anywhere
 
-Pair with `ekatva pair --away` and the QR code also carries a tunnel URL, so
-the phone can pair from another network. After pairing, you don't need to do
+`ekatva pair` opens a tunnel and the QR code carries its URL as well as the
+laptop's local address, so the phone pairs from any network: mobile data or
+another Wi-Fi. (`ekatva pair --lan` skips the tunnel, for the same Wi-Fi
+only.) The default tunnel is a Cloudflare quick tunnel: install `cloudflared`
+(on Arch, `pacman -S cloudflared`); no account needed. After pairing, you don't need to do
 anything: when the phone can't reach the laptop where it last was, it asks the
 pair's **private mailbox** on [ntfy](https://ntfy.sh) "where are you?"; the
 laptop starts a tunnel and answers with its URL; the phone connects.

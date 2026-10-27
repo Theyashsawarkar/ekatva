@@ -91,7 +91,8 @@ export interface DaemonOptions {
   rendezvous?: boolean;
   rendezvousEveryMs?: number;
   /** Desktop notifications (pairing requests, log mismatches). */
-  notify?: (title: string, body: string, urgent?: boolean) => void;
+  /** `open`: a window tab to show when the notification is clicked. */
+  notify?: (title: string, body: string, urgent?: boolean, open?: string) => void;
 }
 
 interface Peer {
@@ -199,8 +200,8 @@ export class Daemon {
     (this.o.log ?? ((m) => console.error(m)))(msg);
   }
 
-  private notify(title: string, body: string, urgent = false): void {
-    this.o.notify?.(title, body, urgent);
+  private notify(title: string, body: string, urgent = false, open?: string): void {
+    this.o.notify?.(title, body, urgent, open);
   }
 
   async start(): Promise<void> {
@@ -389,8 +390,9 @@ export class Daemon {
       this.emitPending();
       this.notify(
         `${c.hello.name} wants to pair`,
-        `Check that it shows ${c.sas.join(" ")} and confirm on the laptop.`,
+        `Check that it shows ${c.sas.join(" ")}. Click to answer in the ekatva window.`,
         true,
+        "pair",
       );
     });
   }
