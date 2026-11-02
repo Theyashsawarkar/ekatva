@@ -17,7 +17,7 @@ So security is the design, not a feature.
    unpairing closes the connection at once.
 4. **Defense in depth.** Files stay inside shared folders; private places need
    their own grant; ekatva's state is unreachable. Root still goes through
-   anumati or polkit.
+   dvarapala or polkit.
 5. **Everything is logged**, hash-chained, on both devices, without secrets.
 
 ## Keys at rest

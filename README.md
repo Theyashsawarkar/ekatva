@@ -61,7 +61,7 @@ anything but ciphertext.
   dictate a reply, approve or deny a tool, interrupt it. **Start a new
   session** in any of your projects, and follow its output live.
 - **Root, from your pocket.** When an agent needs `sudo` (through
-  [anumati](https://github.com/Theyashsawarkar/anumati)) or an app needs
+  [dvarapala](https://github.com/Theyashsawarkar/dvarapala)) or an app needs
   admin rights (through [pramana](https://github.com/Theyashsawarkar/pramana)),
   the request appears on the phone with exactly what will run. Approve it
   with your fingerprint and type your password on the phone; it travels end
@@ -200,7 +200,7 @@ design, not a feature.
 | runs the tunnel or the Wi-Fi | Sees ciphertext and sizes only: encryption is end to end. |
 | deletes or changes your files through the phone | Every change is in the action log on both devices and can be undone; the old version is in the undo store. |
 | edits the log to hide it | The hash chain breaks, and the other device's mirror disagrees. |
-| gets in through a bug | Capabilities are checked on the laptop for every call; root still goes through anumati or polkit, which show exactly what runs; everything is logged to the journal. |
+| gets in through a bug | Capabilities are checked on the laptop for every call; root still goes through dvarapala or polkit, which show exactly what runs; everything is logged to the journal. |
 
 - **Keys**: X25519, ChaCha20-Poly1305 and BLAKE2b from the audited
   [@noble](https://paulmillr.com/noble/) libraries, the same code on both
@@ -273,7 +273,7 @@ walks through one end to end.
 | Website and documentation | done: [theyashsawarkar.github.io/ekatva](https://theyashsawarkar.github.io/ekatva/) |
 | Phone app | core done and tested against the daemon; screens done; first device build next |
 | Calls, SMS, notifications, lock (native module) | built; first device test next |
-| Root approvals from the phone (anumati) | done, tested; polkit (pramana) next |
+| Root approvals from the phone (dvarapala) | done, tested; polkit (pramana) next |
 | Replacing KDE Connect in Vayu | planned |
 
 ## Roadmap

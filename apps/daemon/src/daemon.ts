@@ -73,7 +73,7 @@ export interface DaemonOptions {
   key: KeyPair;
   stateDir: string;
   socketPath: string;
-  /** Where anumati and pramana hand over root requests; default beside socketPath. */
+  /** Where dvarapala and pramana hand over root requests; default beside socketPath. */
   rootSocketPath?: string;
   undoDir: string;
   configDir: string;

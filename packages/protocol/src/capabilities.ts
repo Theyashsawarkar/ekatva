@@ -70,7 +70,7 @@ export const CAPABILITIES = {
     side: "laptop",
     risk: "critical",
     title: "Approve root",
-    detail: "anumati and polkit prompts, with your password typed on the phone",
+    detail: "dvarapala and polkit prompts, with your password typed on the phone",
   },
   journal: {
     side: "laptop",

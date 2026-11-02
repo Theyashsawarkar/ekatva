@@ -225,7 +225,7 @@ describe("phone and laptop, end to end", () => {
   });
 
   it("answers a root request from the laptop's window, the password never logged", async () => {
-    // A stand-in for anumati's window on the laptop.
+    // A stand-in for dvarapala's window on the laptop.
     const win = netConnect(join(root, "ekatva-root.sock"));
     await new Promise((r) => win.once("connect", r));
     const got: string[] = [];

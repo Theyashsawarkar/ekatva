@@ -18,7 +18,7 @@ not in public issues. You'll get an answer within a week.
 - Private keys stay in the Android keystore and the desktop keyring.
 - A password typed on the phone for a root prompt goes only to that prompt;
   it is never logged, stored or kept in memory longer than the request.
-- Root commands still go through anumati or polkit, which show exactly what
+- Root commands still go through dvarapala or polkit, which show exactly what
   will run.
 - Agent answers are sent only after the daemon checks the pane still shows
   the question that was answered.

@@ -73,7 +73,8 @@ export type Status = z.infer<typeof Status>;
 
 export const RootRequest = z.object({
   id: z.string(),
-  /** "anumati" (an agent's root command) or "polkit" (an app wanting admin rights). */
+  /** "anumati" (an agent's root command, through dvarapala: the wire keeps its old name so
+   *  phones on older builds still understand it) or "polkit" (an app wanting admin rights). */
   via: z.enum(["anumati", "polkit"]),
   requester: z.string(),
   reason: z.string(),

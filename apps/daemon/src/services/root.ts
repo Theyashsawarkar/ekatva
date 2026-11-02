@@ -1,7 +1,7 @@
 /**
  * Root approvals from the phone.
  *
- * The windows that ask for root (anumati for agents' commands, pramana for
+ * The windows that ask for root (dvarapala for agents' commands, pramana for
  * polkit) connect to ekatva-root.sock in your runtime directory and hand
  * over their request: newline-delimited JSON.
  *

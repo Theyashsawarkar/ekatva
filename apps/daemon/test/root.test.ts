@@ -10,7 +10,7 @@ let dir: string;
 let bridge: RootBridge;
 const opened: Socket[] = [];
 
-/** A stand-in for anumati's window: sends a request, collects what comes back. */
+/** A stand-in for dvarapala's window: sends a request, collects what comes back. */
 async function window(request: object) {
   const s = netConnect(join(dir, "root.sock"));
   opened.push(s);

@@ -4,11 +4,11 @@ description: "Approve sudo for your agents, with your password typed on the phon
 ---
 
 :::note[Status]
-Works with [anumati](https://github.com/Theyashsawarkar/anumati) from v1.3.0. polkit
+Works with [dvarapala](https://github.com/Theyashsawarkar/dvarapala) from v1.3.0. polkit
 prompts (pramana) are next.
 :::
 
-When an agent needs root through [anumati](https://github.com/Theyashsawarkar/anumati),
+When an agent needs root through [dvarapala](https://github.com/Theyashsawarkar/dvarapala),
 or an app asks for admin rights through [pramana](https://github.com/Theyashsawarkar/pramana)
 (polkit), the request appears on your phone with exactly what will run and why.
 
@@ -21,7 +21,7 @@ phone asks for your fingerprint every time.
 
 ## How it stays safe
 
-- **ekatva never runs anything as root.** anumati's window hands its request to
+- **ekatva never runs anything as root.** dvarapala's window hands its request to
   ekatva over `ekatva-root.sock` (in your runtime directory, only you can open it);
   your answer comes back into that window, which ticks the commands you chose and
   fills its password field, then goes through its own `sudo` check and runner,
