@@ -22,7 +22,7 @@
   },
   "devDependencies": {
     "@ekatva/config": "workspace:*",
-    "@types/node": "26.6.5",
+    "@types/node": "26.6.6",
     "noise-handshake": "4.2.0",
     "typescript": "7.0.2",
     "vitest": "5.0.5"
