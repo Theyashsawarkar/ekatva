@@ -4,6 +4,7 @@ Newest first. Releases are tags (`vX.Y.Z`); every package's `version` moves toge
 
 ## Unreleased
 
+- A logo and a shloka at the top of the README and the website: every Vayu tool has them now.
 - Fix: the phone's native module (`apps/mobile/modules/ekatva-phone/android`:
   the Kotlin code, its manifest, build.gradle, the device-admin policy) was
   never in the repository: a root `.gitignore` rule `android/` matched it.

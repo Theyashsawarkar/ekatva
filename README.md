@@ -1,5 +1,18 @@
 <h1 align="center">ekatva <sub>एकत्व</sub></h1>
 
+<!-- identity -->
+<p align="center">
+  <img alt="ekatva logo" src="assets/logo.svg" width="120">
+</p>
+
+<p align="center">
+  <b>यस्मिन्सर्वाणि भूतान्यात्मैवाभूद्विजानतः ।<br>
+  तत्र को मोहः कः शोक एकत्वमनुपश्यतः ॥</b><br>
+  <i>When all beings have become one's own self, what confusion or sorrow is left for one who sees oneness?</i><br>
+  <sub>Īśa Upaniṣad 7</sub>
+</p>
+<!-- /identity -->
+
 <p align="center">
   <b>Your phone and your laptop as one device.</b><br>
   Pair once with a QR code; then each controls the other, on the same Wi-Fi or from anywhere, end-to-end encrypted.
