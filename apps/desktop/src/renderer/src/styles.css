@@ -236,6 +236,7 @@ main {
   text-align: left;
   background: none;
   border: 1px solid transparent;
+  border-radius: 10px;
   padding: 9px 10px;
 }
 .row.sel {
@@ -385,6 +386,7 @@ main {
   width: 100%;
   background: none;
   border: 1px solid transparent;
+  border-radius: 10px;
   padding: 7px 10px;
 }
 .entry.sel {
