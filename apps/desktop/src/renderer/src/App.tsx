@@ -1,9 +1,9 @@
 import type { Device, Entry, PendingPair } from "@ekatva/protocol";
 import { CAPABILITIES, type Capability, PRESETS, type Preset } from "@ekatva/protocol/capabilities";
 import QRCode from "qrcode";
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { usePoll, useSub } from "./hooks";
-import { HELP, useKeys } from "./keys";
+import { confirmKey, KeyLayer, ModePill, openHelp, openPalette, useBinds } from "./keys";
 import { api, lastError } from "./rpc";
 
 type Tab = "phones" | "log" | "caffeine" | "phone";
@@ -31,7 +31,6 @@ export function App() {
   const asked = new URLSearchParams(location.search).get("tab");
   const initial = asked === "pair" ? "phones" : ((asked as Tab | null) ?? "phones");
   const [tab, setTab] = useState<Tab>(initial);
-  const [help, setHelp] = useState(false);
   const [pairing, setPairing] = useState(asked === "pair");
   const devices = useSub<Device[]>(
     (on) => api.admin.devices.watch.subscribe(undefined, { onData: on }),
@@ -40,25 +39,51 @@ export function App() {
   const status = usePoll(() => api.status.query(), [], 5000);
   const online = (devices ?? []).filter((d) => d.online);
 
-  useKeys(
-    {
-      "1": () => setTab("phones"),
-      "2": () => setTab("log"),
-      "3": () => setTab("caffeine"),
-      "4": () => setTab("phone"),
-      p: () => {
-        setTab("phones");
-        setPairing(true);
-      },
-      "?": () => setHelp((h) => !h),
-      Escape: () => (help ? setHelp(false) : setPairing(false)),
-      o: () => void api.caffeine.set.mutate({ level: "off" }).then(status.reload),
-      i: () => void api.caffeine.set.mutate({ level: "on" }).then(status.reload),
-      h: () => void api.caffeine.set.mutate({ level: "high" }).then(status.reload),
-      r: () => void api.admin.phone.mutate.mutate({ path: "ring" }).catch(() => undefined),
+  const step = (n: number) =>
+    setTab((t) => {
+      const i = TABS.findIndex((x) => x.id === t);
+      return TABS[(((i + n) % TABS.length) + TABS.length) % TABS.length]?.id ?? t;
+    });
+  const caffeine = (level: "off" | "on" | "high") =>
+    void api.caffeine.set.mutate({ level }).then(status.reload);
+  const phone = (path: string, input?: unknown) =>
+    void api.admin.phone.mutate.mutate({ key: null, path, input }).catch(() => undefined);
+  const keepAwake = async () => {
+    const key = online[0]?.key;
+    if (!key) return;
+    const s = (await api.admin.phone.query.query({ key, path: "status" }).catch(() => null)) as {
+      awake?: boolean;
+    } | null;
+    phone("keepAwake", { on: !s?.awake });
+  };
+  useBinds("window", {
+    "1": () => setTab("phones"),
+    "2": () => setTab("log"),
+    "3": () => setTab("caffeine"),
+    "4": () => setTab("phone"),
+    H: (n) => step(-n),
+    L: (n) => step(n),
+    "Space t p": () => setTab("phones"),
+    "Space t l": () => setTab("log"),
+    "Space t c": () => setTab("caffeine"),
+    "Space t h": () => setTab("phone"),
+    r: () => status.reload(),
+    "?": openHelp,
+    "Space ?": openHelp,
+    "Space Space": openPalette,
+    "Space q": () => window.close(),
+    Esc: () => setPairing(false),
+    "Space c o": () => caffeine("off"),
+    "Space c i": () => caffeine("on"),
+    "Space c h": () => caffeine("high"),
+    "Space p r": () => phone("ring"),
+    "Space p l": () => phone("lock"),
+    "Space p k": () => void keepAwake(),
+    "Space a p": () => {
+      setTab("phones");
+      setPairing(true);
     },
-    [help, status.reload],
-  );
+  });
 
   return (
     <div className="app">
@@ -66,6 +91,7 @@ export function App() {
         <span className="brand">
           ekatva <span className="deva">एकत्व</span>
         </span>
+        <ModePill />
         <nav>
           {TABS.map((t) => (
             <button
@@ -85,7 +111,7 @@ export function App() {
         <span className={`cap ${online.length ? "ok" : ""}`}>
           {online.length ? `● ${online.map((d) => d.name).join(", ")}` : "○ no phone"}
         </span>
-        <button type="button" className="ghost" onClick={() => setHelp(true)}>
+        <button type="button" className="ghost" onClick={openHelp}>
           <kbd>?</kbd>
         </button>
       </header>
@@ -102,25 +128,7 @@ export function App() {
         {tab === "caffeine" ? <Caffeine /> : null}
         {tab === "phone" ? <Phone devices={devices ?? []} /> : null}
       </main>
-      {help ? (
-        <div className="scrim">
-          <div className="panel help">
-            <div className="listhead">
-              <h3>Keys</h3>
-              <span className="spacer" />
-              <button type="button" onClick={() => setHelp(false)}>
-                Close <kbd>Esc</kbd>
-              </button>
-            </div>
-            {HELP.map(([k, d]) => (
-              <div key={k} className="helprow">
-                <kbd>{k}</kbd>
-                <span>{d}</span>
-              </div>
-            ))}
-          </div>
-        </div>
-      ) : null}
+      <KeyLayer />
     </div>
   );
 }
@@ -136,17 +144,33 @@ function Phones({
   setPairing: (b: boolean) => void;
 }) {
   const [sel, setSel] = useState(0);
+  const [side, setSide] = useState<"list" | "perms">("list");
+  const [perm, setPerm] = useState(0);
   const [error, setError] = useState<string | null>(null);
   const d = devices[Math.min(sel, devices.length - 1)];
-  useKeys(
-    {
-      j: () => setSel((s) => Math.min(devices.length - 1, s + 1)),
-      k: () => setSel((s) => Math.max(0, s - 1)),
-      g: () => setSel(0),
-      G: () => setSel(devices.length - 1),
-    },
-    [devices.length],
+  const laptopCaps = (Object.keys(CAPABILITIES) as Capability[]).filter(
+    (c) => CAPABILITIES[c].side === "laptop" && c !== "admin",
   );
+  const perms: Capability[] = [...laptopCaps, "phone.notifications"];
+  const cur = perms[Math.min(perm, perms.length - 1)];
+  const toggle = () => {
+    if (d && cur && !pairing) void grant(cur, !d.grants.includes(cur));
+  };
+  const move = (n: number) =>
+    side === "list"
+      ? setSel((s) => Math.max(0, Math.min(devices.length - 1, s + n)))
+      : setPerm((p) => Math.max(0, Math.min(perms.length - 1, p + n)));
+  useBinds("phones", {
+    j: (n) => move(n),
+    k: (n) => move(-n),
+    "g g": () => move(-1e6),
+    G: () => move(1e6),
+    h: () => setSide("list"),
+    l: () => d && !pairing && setSide("perms"),
+    Enter: side === "perms" ? toggle : undefined,
+    "Space m g": toggle,
+    "Space d d": () => void unpair(),
+  });
 
   const grant = async (cap: Capability, on: boolean) => {
     if (!d) return;
@@ -160,9 +184,9 @@ function Phones({
   const unpair = async () => {
     if (
       !d ||
-      !confirm(
+      !(await confirmKey(
         `Unpair ${d.name}? It can't connect until you pair it again (or undo this in the log).`,
-      )
+      ))
     )
       return;
     await api.admin.devices.unpair.mutate({ key: d.key }).catch((e: Error) => setError(e.message));
@@ -174,7 +198,7 @@ function Phones({
         <div className="listhead">
           <h2>Phones</h2>
           <button type="button" className="primary" onClick={() => setPairing(true)}>
-            Pair a phone <kbd>p</kbd>
+            Pair a phone <kbd>Space a p</kbd>
           </button>
         </div>
         {!devices.length ? (
@@ -184,8 +208,11 @@ function Phones({
           <button
             type="button"
             key={x.key}
-            className={`row ${i === sel ? "sel" : ""}`}
-            onClick={() => setSel(i)}
+            className={`row ${i === sel ? "sel" : ""} ${side === "list" ? "" : "away"}`}
+            onClick={() => {
+              setSel(i);
+              setSide("list");
+            }}
           >
             <span className={`dot ${x.online ? "ok" : ""}`} />
             <span className="grow">
@@ -212,14 +239,18 @@ function Phones({
             {error ? <div className="banner bad">{error}</div> : null}
             <h3>What it may do on this laptop</h3>
             <Grants
-              caps={(Object.keys(CAPABILITIES) as Capability[]).filter(
-                (c) => CAPABILITIES[c].side === "laptop" && c !== "admin",
-              )}
+              caps={laptopCaps}
               grants={d.grants}
               onChange={grant}
+              cursor={side === "perms" ? cur : undefined}
             />
             <h3>Its own events it may send here</h3>
-            <Grants caps={["phone.notifications"]} grants={d.grants} onChange={grant} />
+            <Grants
+              caps={["phone.notifications"]}
+              grants={d.grants}
+              onChange={grant}
+              cursor={side === "perms" ? cur : undefined}
+            />
             <p className="dim small">
               What this laptop may do on the phone is decided on the phone, in its Settings.
             </p>
@@ -237,7 +268,7 @@ function Phones({
               ))}
               <span className="spacer" />
               <button type="button" className="danger" onClick={() => void unpair()}>
-                Unpair
+                Unpair <kbd>Space d d</kbd>
               </button>
             </div>
           </>
@@ -251,15 +282,20 @@ function Grants({
   caps,
   grants,
   onChange,
+  cursor,
 }: {
   caps: Capability[];
   grants: string[];
   onChange: (c: Capability, on: boolean) => void;
+  cursor?: Capability | undefined;
 }) {
   return (
     <div className="grants">
       {caps.map((c) => (
-        <label key={c} className={`grant risk-${CAPABILITIES[c].risk}`}>
+        <label
+          key={c}
+          className={`grant risk-${CAPABILITIES[c].risk} ${c === cursor ? "sel" : ""}`}
+        >
           <input
             type="checkbox"
             checked={grants.includes(c)}
@@ -325,7 +361,10 @@ function Pair({ onClose }: { onClose: () => void }) {
       (e: Error) => setError(e.message),
     );
   };
-  useKeys({ Enter: () => decide(true), x: () => decide(false) }, [req?.id, preset]);
+  useBinds("pairing", {
+    Enter: req ? () => decide(true) : undefined,
+    x: req ? () => decide(false) : undefined,
+  });
 
   const left = offer ? Math.max(0, Math.round((offer.expires - now) / 1000)) : 0;
   return (
@@ -409,8 +448,12 @@ function Log({ devices }: { devices: Device[] }) {
 
   const undo = (e: Entry | undefined) => {
     if (!e?.undo || !e.ok || undone.has(e.seq) || host !== "self") return;
-    if (!confirm(`Undo #${e.seq}: ${e.summary}?`)) return;
-    void api.journal.undo.mutate({ seq: e.seq }).then(
+    void confirmKey(`Undo #${e.seq}: ${e.summary}?`).then((yes) => {
+      if (yes) run(e.seq);
+    });
+  };
+  const run = (seq: number) => {
+    void api.journal.undo.mutate({ seq }).then(
       (r) => {
         setNote(r.summary);
         log.reload();
@@ -418,16 +461,17 @@ function Log({ devices }: { devices: Device[] }) {
       (err: Error) => setNote(err.message),
     );
   };
-  useKeys(
-    {
-      j: () => setSel((s) => Math.min(entries.length - 1, s + 1)),
-      k: () => setSel((s) => Math.max(0, s - 1)),
-      g: () => setSel(0),
-      G: () => setSel(entries.length - 1),
-      u: () => undo(chosen),
+  useBinds("log", {
+    j: (n) => setSel((s) => Math.max(0, Math.min(entries.length - 1, s + n))),
+    k: (n) => setSel((s) => Math.max(0, s - n)),
+    "g g": () => setSel(0),
+    G: () => setSel(Math.max(0, entries.length - 1)),
+    u: () => undo(chosen),
+    r: () => {
+      log.reload();
+      checks.reload();
     },
-    [entries.length, chosen?.seq, host],
-  );
+  });
 
   return (
     <section className="full">
@@ -507,34 +551,46 @@ function Caffeine() {
     [],
   );
   const [minutes, setMinutes] = useState<number | null>(null);
+  const [sel, setSel] = useState(0);
   const set = (level: "off" | "on" | "high") =>
     void api.caffeine.set.mutate({ level, minutes: level === "off" ? null : minutes });
   const LEVELS = [
-    { level: "off", title: "Off", detail: "Dims, locks and sleeps as usual.", key: "o" },
+    { level: "off", title: "Off", detail: "Dims, locks and sleeps as usual.", key: "Space c o" },
     {
       level: "on",
       title: "Caffeine",
       detail: "No dimming, no lock, no sleep while you're away.",
-      key: "i",
+      key: "Space c i",
     },
     {
       level: "high",
       title: "High caffeine",
       detail:
         "Keeps running with the lid closed. Closing the lid still locks it; it gives up at 10% battery.",
-      key: "h",
+      key: "Space c h",
     },
   ] as const;
+  useBinds("caffeine", {
+    j: (n) => setSel((s) => Math.min(LEVELS.length - 1, s + n)),
+    k: (n) => setSel((s) => Math.max(0, s - n)),
+    Enter: () => {
+      const l = LEVELS[sel];
+      if (l) set(l.level);
+    },
+  });
   return (
     <section className="full narrow">
       <h2>Caffeine</h2>
       <div className="levels">
-        {LEVELS.map((l) => (
+        {LEVELS.map((l, i) => (
           <button
             type="button"
             key={l.level}
-            className={`level ${caf?.level === l.level ? `on lv-${l.level}` : ""}`}
-            onClick={() => set(l.level)}
+            className={`level ${caf?.level === l.level ? `on lv-${l.level}` : ""} ${i === sel ? "sel" : ""}`}
+            onClick={() => {
+              setSel(i);
+              set(l.level);
+            }}
           >
             <b>
               {l.title} <kbd>{l.key}</kbd>
@@ -598,6 +654,20 @@ function Phone({ devices }: { devices: Device[] }) {
   );
   const [note, setNote] = useState<string | null>(null);
   const [clip, setClip] = useState("");
+  const [sel, setSel] = useState(0);
+  const clipRef = useRef<HTMLTextAreaElement>(null);
+  const list = files.data ?? [];
+  const chosen = list[Math.min(sel, list.length - 1)];
+  const up = () => {
+    setPath(path.split("/").slice(0, -1).join("/") || "~");
+    setSel(0);
+  };
+  const open = () => {
+    if (chosen?.kind === "dir") {
+      setPath(chosen.path);
+      setSel(0);
+    }
+  };
   const ask = (p: string, input?: unknown) =>
     void api.admin.phone.mutate.mutate({ key: online?.key ?? null, path: p, input }).then(
       () => {
@@ -606,6 +676,22 @@ function Phone({ devices }: { devices: Device[] }) {
       },
       (e: Error) => setNote(e.message),
     );
+
+  useBinds("phone", {
+    j: (n) => setSel((s) => Math.max(0, Math.min(list.length - 1, s + n))),
+    k: (n) => setSel((s) => Math.max(0, s - n)),
+    "g g": () => setSel(0),
+    G: () => setSel(Math.max(0, list.length - 1)),
+    Enter: open,
+    l: open,
+    h: path !== "~" ? up : undefined,
+    i: () => clipRef.current?.focus(),
+    "Space y c": clip ? () => ask("clipboard.set", { text: clip }) : undefined,
+    r: () => {
+      status.reload();
+      files.reload();
+    },
+  });
 
   if (!online)
     return (
@@ -627,24 +713,28 @@ function Phone({ devices }: { devices: Device[] }) {
         ) : null}
         <div className="actions col">
           <button type="button" onClick={() => ask("ring")}>
-            Ring it <kbd>r</kbd>
+            Ring it <kbd>Space p r</kbd>
           </button>
           <button type="button" onClick={() => ask("lock")}>
-            Lock it
+            Lock it <kbd>Space p l</kbd>
           </button>
           <button type="button" onClick={() => ask("keepAwake", { on: !status.data?.awake })}>
-            {status.data?.awake ? "Let its screen sleep" : "Keep its screen on"}
+            {status.data?.awake ? "Let its screen sleep" : "Keep its screen on"}{" "}
+            <kbd>Space p k</kbd>
           </button>
         </div>
-        <h3>Clipboard</h3>
+        <h3>
+          Clipboard <kbd>i</kbd>
+        </h3>
         <textarea
+          ref={clipRef}
           value={clip}
           onChange={(e) => setClip(e.target.value)}
           placeholder="Text to put on the phone's clipboard"
           rows={3}
         />
         <button type="button" disabled={!clip} onClick={() => ask("clipboard.set", { text: clip })}>
-          Send to the phone
+          Send to the phone <kbd>Space y c</kbd>
         </button>
         {note ? <div className="banner">{note}</div> : null}
       </section>
@@ -653,21 +743,24 @@ function Phone({ devices }: { devices: Device[] }) {
           <h3>Its files</h3>
           <span className="mono dim">{path}</span>
           {path !== "~" ? (
-            <button
-              type="button"
-              onClick={() => setPath(path.split("/").slice(0, -1).join("/") || "~")}
-            >
-              Up
+            <button type="button" onClick={up}>
+              Up <kbd>h</kbd>
             </button>
           ) : null}
         </div>
         {files.error ? <div className="banner bad">{files.error}</div> : null}
-        {(files.data ?? []).map((f) => (
+        {list.map((f, i) => (
           <button
             type="button"
             key={f.path}
-            className="row"
-            onClick={() => f.kind === "dir" && setPath(f.path)}
+            className={`row ${i === sel ? "sel" : ""}`}
+            onClick={() => {
+              setSel(i);
+              if (f.kind === "dir") {
+                setPath(f.path);
+                setSel(0);
+              }
+            }}
           >
             <span>{f.kind === "dir" ? "📁" : "📄"}</span>
             <span className="grow">{f.name}</span>

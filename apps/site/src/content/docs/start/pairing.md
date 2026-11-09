@@ -7,7 +7,7 @@ description: "One QR code, four emoji, done."
 ekatva pair
 ```
 
-Or open the **ekatva** window and press **Pair a phone** (<kbd>p</kbd>): it's
+Or open the **ekatva** window and press **Pair a phone** (<kbd>Space</kbd> <kbd>a</kbd> <kbd>p</kbd>): it's
 the easiest way, and it shows the request and the emoji when the phone asks.
 If the window is closed, the "wants to pair" notification opens it when you
 click it.

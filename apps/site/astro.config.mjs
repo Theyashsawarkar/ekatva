@@ -44,7 +44,13 @@ export default defineConfig({
         },
         {
           label: "Reference",
-          items: ["reference/cli", "reference/config", "reference/protocol", "reference/changelog"],
+          items: [
+            "reference/cli",
+            "reference/keys",
+            "reference/config",
+            "reference/protocol",
+            "reference/changelog",
+          ],
         },
       ],
     }),

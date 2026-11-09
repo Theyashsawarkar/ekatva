@@ -4,6 +4,37 @@ Newest first. Releases are tags (`vX.Y.Z`); every package's `version` moves toge
 
 ## Unreleased
 
+- **The desktop window's keys are vim-like, with `Space` as the leader**,
+  grouped like every Vayu tool (Reference → The window's keys).
+  - Normal and Insert mode, shown in a pill at the top. A text field is
+    Insert mode, and `Esc` leaves it. A checkbox no longer leaves every key
+    dead after you click it.
+    On the pairing screen, `Enter` pairs even while the "It may do"
+    drop-down has focus (its arrows still pick an option).
+  - After `Space` (or `g`) a strip shows what can follow (which-key).
+    `Space Space` opens a palette of every key, and `?` shows the tab's keys.
+  - Counts work (`5j`). `gg` / `G` jump to the top / bottom (a single `g`
+    used to). `H` / `L` switch tabs (`1`-`4` still do).
+  - **Moved:** `p` pair → `Space a p`; `o` / `i` / `h` caffeine →
+    `Space c o` / `c i` / `c h`; `r` ring the phone → `Space p r`. These
+    worked from every tab, so a stray `r` rang the phone. `r` reloads now.
+  - New keys for what was mouse-only:
+    - Phones: `h` / `l` move between the list and its permissions, `Enter`
+      or `Space m g` toggles one, `Space d d` unpairs.
+    - Phone: `Space p l` locks it, `Space p k` keeps its screen on, `i`
+      types clipboard text and `Space y c` sends it, and `j` / `k`, `l` and
+      `h` browse its files.
+    - Caffeine: `j` / `k` and `Enter` pick a level.
+  - Unpairing and undoing ask with `y` only (any other key says no), in the
+    window instead of a browser dialog.
+  - The key engine (`keymap.ts`) has tests, including that every key is
+    annotated for Vayu's keybinding search.
+  - A moved key (`p`, `o`, `i`, `h` where nothing else binds it) says where
+    it went (`p moved: pairing a phone is Space a p now`) for this release.
+  - Fix (before release): `j` or `G` on an empty Log or file list left no row
+    selectable until `k`; clicking a caffeine level now also selects it, so
+    `Enter` sets the level you clicked.
+
 - Every corner is rounded: the desktop window's rows and entries.
 - A logo and a shloka at the top of the README and the website: every Vayu tool has them now.
 - Fix: the phone's native module (`apps/mobile/modules/ekatva-phone/android`:
