@@ -29,10 +29,32 @@ export function questionHash(text: string, options: { key: string; label: string
   return toB64u(blake2b(utf8.encode(JSON.stringify([text, options])), { dkLen: 9 }));
 }
 
+/** "✶ Transfiguring… (16s · ↓ 1.1k tokens)": Claude Code's line while it works. */
+const SPINNER = /^[✻✽✶✳✢·*]\s+\S.*…\s*\(\s*\d+[smh]/;
+/** "✻ Waiting for 1 background agent to finish": still working, through its agents. */
+const BG_WAIT = /^[✻✽✶✳✢·*]\s+Waiting for \d+ background agents?/i;
+/** A background agent in the footer: "◯ security-reviewer  Reading the tests". */
+const BG_AGENT = /^\s*[◯○]\s+(\S+)\s{2,}(\S.*?)\s*$/;
+
+/** Background agents still at work, from the footer. */
+export function backgroundAgents(capture: string): { name: string; activity: string }[] {
+  const out: { name: string; activity: string }[] = [];
+  for (const l of capture.split("\n").slice(-12)) {
+    const m = BG_AGENT.exec(l);
+    if (m) out.push({ name: m[1] as string, activity: (m[2] as string).slice(0, 120) });
+  }
+  return out;
+}
+
 export function readScreen(capture: string): Screen {
   const lines = capture.replace(/\s+$/, "").split("\n");
   const bottom = lines.slice(-8).join("\n");
-  const working = /esc to interrupt/i.test(bottom);
+  // Near the bottom: the status line sits above the input box and its footer.
+  const near = lines.slice(-24).map((l) => l.trim());
+  const working =
+    /esc to interrupt/i.test(bottom) ||
+    near.some((l) => SPINNER.test(l) || BG_WAIT.test(l)) ||
+    backgroundAgents(capture).length > 0;
 
   // The last numbered menu: options 1, 2, 3… in order, in the last 30 lines.
   const tail = lines.slice(-30);

@@ -96,10 +96,46 @@ describe("media", () => {
       length: 380_000,
       position: 51_000,
     });
-    expect(nada.art).toBe("data:image/png;base64,iVBORw==");
-    expect(got.players[0]!.art).toMatch(/^https:/);
+    // The cover goes by id; its bytes only when asked, once.
+    expect(nada.artId).toMatch(/^[\w-]{16}$/);
+    expect(JSON.stringify(got)).not.toContain("base64");
+    expect(await m.art(nada.artId!)).toBe("data:image/png;base64,iVBORw==");
+    // A remote cover is never handed over as a URL for the phone to fetch.
+    expect(await m.art(got.players[0]!.artId!)).toBeNull();
+    expect(await m.art("unknown")).toBeNull();
     expect(got.volume).toEqual({ percent: 50, muted: false });
     expect(got.brightness).toBe(60);
+  });
+
+  it("scales covers for the phone, local or remote, and falls back to the original", async () => {
+    const scaled: string[] = [];
+    const h: MediaHost = {
+      ...host(),
+      cover: async (source) => {
+        scaled.push(source);
+        return source.includes("broken") ? null : Buffer.from([0xff, 0xd8, 0xff]);
+      },
+      fetchArt: async () => Buffer.from([0x89, 0x50]),
+    };
+    const s = new MediaService(h, 20);
+    const got = await s.get();
+    const [drishya, nada] = got.players;
+    expect(await s.art(nada!.artId!)).toBe("data:image/jpeg;base64,/9j/");
+    expect(await s.art(drishya!.artId!)).toBe("data:image/jpeg;base64,/9j/");
+    expect(scaled).toEqual([
+      "/home/u/.cache/nada/cover.png",
+      "https://i.ytimg.com/vi/x/mqdefault.jpg",
+    ]);
+    // Asked again: kept, not scaled twice.
+    await s.art(nada!.artId!);
+    expect(scaled).toHaveLength(2);
+    // ffmpeg can't: the original file, or the remote bytes fetched by the laptop.
+    f.players.nada!.art = "file:///home/u/.cache/nada/broken/cover.png";
+    f.players.drishya!.art = "https://example.com/broken.png";
+    const again = await s.get();
+    expect(await s.art(again.players[1]!.artId!)).toBe("data:image/png;base64,iVBORw==");
+    expect(await s.art(again.players[0]!.artId!)).toBe("data:image/png;base64,iVA=");
+    s.stop();
   });
 
   it("controls the playing player by default, and undoes a pause", async () => {

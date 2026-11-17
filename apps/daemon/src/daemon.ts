@@ -1,10 +1,11 @@
 /**
  * The daemon: the link for phones (on the LAN, and through a tunnel when
- * allowed), the local socket for this laptop's own user (the desktop
- * window, the CLI), and everything they reach.
+ * allowed), the local socket for this laptop's own user (the Vyom
+ * popup, the CLI), and everything they reach.
  */
+import { execFile } from "node:child_process";
 import { randomBytes } from "node:crypto";
-import { chmodSync, rmSync } from "node:fs";
+import { chmodSync, existsSync, renameSync, rmSync } from "node:fs";
 import { createServer, type Server } from "node:http";
 import { networkInterfaces, userInfo } from "node:os";
 import { dirname, join } from "node:path";
@@ -55,12 +56,22 @@ import type { Config } from "./config.js";
 import { type DeviceRecord, Devices } from "./devices.js";
 import { FileStore } from "./journalFile.js";
 import { AgentsService, type Tmux } from "./services/agents.js";
-import { CaffeineService, type Host } from "./services/caffeine.js";
+import { type AppearanceHost, AppearanceService } from "./services/appearance.js";
+import { BeaconSender, VIRTUAL } from "./services/beacon.js";
+import { CallState } from "./services/calls.js";
+import { ClipboardSync } from "./services/clipboardSync.js";
+import { DesktopNotifications } from "./services/desktopNotifications.js";
 import { LaptopFiles } from "./services/files.js";
+import { type FirewallProblem, firewallProblem } from "./services/firewall.js";
+import { InputService, type Runner } from "./services/input.js";
+import { type Host, JyotiService } from "./services/jyoti.js";
 import { type MediaHost, MediaService } from "./services/media.js";
+import { NotificationBridge, type Prompt } from "./services/notifyBridge.js";
 import { Rendezvous } from "./services/rendezvous.js";
 import { RootBridge } from "./services/root.js";
+import { type ShareHost, ShareInbox } from "./services/share.js";
 import { SystemService } from "./services/system.js";
+import { TerminalService } from "./services/terminal.js";
 import { Tunnel } from "./services/tunnel.js";
 
 const VERSION = "0.1.0";
@@ -69,10 +80,18 @@ const MAX_FAILURES = 8;
 const FAILURE_WINDOW_MS = 10 * 60_000;
 
 export interface DaemonOptions {
+  /**
+   * How often the laptop checks a phone is still there (a ping over the link); a phone
+   * silent for three of these is dropped, so one that walked out of range comes back
+   * cleanly. 10 s (dropped after 30 s), like the phone's own; 0 turns it off (tests).
+   */
+  keepaliveMs?: number;
   config: Config;
   key: KeyPair;
   stateDir: string;
   socketPath: string;
+  /** dvarapala's log of finished requests (tests: a file of their own). */
+  dvarapalaLog?: string;
   /** Where dvarapala and pramana hand over root requests; default beside socketPath. */
   rootSocketPath?: string;
   undoDir: string;
@@ -80,8 +99,27 @@ export interface DaemonOptions {
   /** 0 picks a free port (tests). */
   port?: number;
   host?: string;
-  mdns?: boolean;
-  caffeineHost?: Host;
+  /** Broadcast the encrypted beacon for phones on the same network (default: config.advertise). */
+  beacon?: boolean;
+  /** Where beacons go (tests); default each real network's broadcast address. */
+  beaconTargets?: () => string[];
+  beaconPort?: number;
+  beaconEveryMs?: number;
+  /** Look at the firewall (default: true). */
+  checkFirewall?: boolean;
+  /** Bridge notifications with the desktop (default: true). */
+  desktopNotifications?: DesktopNotifications | false;
+  /** Runs ydotool and wtype (tests: a fake). */
+  inputRunner?: Runner;
+  /** Where files sent from a phone land (default ~/Downloads). */
+  shareDir?: string;
+  /** Opens links, sets the clipboard, tells you (tests: a fake). */
+  shareHost?: ShareHost;
+  /** Asks for a reply on the laptop (default: a zenity entry). */
+  prompt?: Prompt;
+  jyotiHost?: Host;
+  /** Reads and switches light and dark (tests: a fake). */
+  appearanceHost?: AppearanceHost;
   mediaHost?: MediaHost;
   tmux?: Tmux;
   log?: (msg: string) => void;
@@ -99,7 +137,7 @@ interface Peer {
   key: string;
   channel: Channel;
   phone: TRPCClient<PhoneRouter>;
-  close: (reason?: string) => void;
+  close: (reason: string) => void;
   via: "lan" | "tunnel";
 }
 
@@ -155,14 +193,30 @@ export class Daemon {
   private localWss: WebSocketServer | null = null;
   private timers: ReturnType<typeof setInterval>[] = [];
   private stores: FileStore[] = [];
-  private bonjour: { destroy(): void } | null = null;
+  private beacon: BeaconSender | null = null;
+  /** What blocks phones on the same network, if anything does. */
+  firewall: FirewallProblem | null = null;
   readonly files: LaptopFiles;
-  readonly caffeine: CaffeineService;
+  readonly jyoti: JyotiService;
+  /** The phone's call right now, for the window. */
+  readonly calls = new CallState();
+  readonly appearance: AppearanceService;
   readonly agents: AgentsService;
   readonly system: SystemService;
   readonly media: MediaService;
   readonly root: RootBridge;
   readonly tunnel: Tunnel;
+  readonly input: InputService;
+  readonly share: ShareInbox;
+  private bridge: NotificationBridge | null = null;
+  private stopRootWatch: (() => void) | null = null;
+  readonly clipSync: ClipboardSync;
+  readonly terminal: TerminalService;
+
+  /** Connected phones that may answer root requests. */
+  private rootPhones(): Peer[] {
+    return [...this.peers.values()].filter((p) => this.devices.grantsOf(p.key).has("root"));
+  }
   private rendezvous: Rendezvous | null = null;
   readonly id: string;
   port = 0;
@@ -176,9 +230,34 @@ export class Daemon {
       undoDir: o.undoDir,
       forbidden: [o.stateDir, o.configDir],
     });
-    this.caffeine = new CaffeineService(o.caffeineHost, join(o.stateDir, "caffeine.json"));
+    this.jyoti = new JyotiService(o.jyotiHost, join(o.stateDir, "jyoti.json"));
+    this.appearance = new AppearanceService(o.appearanceHost);
     this.agents = new AgentsService(o.tmux, o.config.agents.roots);
     this.media = new MediaService(o.mediaHost);
+    this.input = new InputService(o.inputRunner);
+    this.terminal = new TerminalService(o.tmux);
+    this.clipSync = new ClipboardSync(
+      join(o.stateDir, "clipboard-sync.json"),
+      () => this.system.clipboardGet(),
+      async (text) => {
+        await Promise.all(
+          [...this.peers.values()].map((p) =>
+            p.phone.clipboard.set.mutate({ text }).catch(() => undefined),
+          ),
+        );
+      },
+      () => this.peers.size > 0,
+    );
+    this.share = new ShareInbox(
+      o.shareHost ?? {
+        openUrl: (url) => runQuiet("xdg-open", [url]),
+        setClipboard: async (text) => {
+          await this.system.clipboardSet(text);
+        },
+        notify: (title, body) => this.notify(title, body),
+      },
+      o.shareDir,
+    );
     this.tunnel = new Tunnel(
       o.config.tunnel.kind,
       () => this.port,
@@ -188,12 +267,17 @@ export class Daemon {
     this.root = new RootBridge(
       o.rootSocketPath ?? join(dirname(o.socketPath), "ekatva-root.sock"),
       (m) => this.log(m),
+      () => undefined,
+      join(o.stateDir, "root-answers.json"),
+      ...(o.dvarapalaLog ? [o.dvarapalaLog] : []),
     );
     this.system = new SystemService(o.config.name, async () => ({
-      caffeine: (await this.caffeine.get()).level,
+      jyoti: (await this.jyoti.get()).level,
       waiting: (await this.agents.list()).filter((s) => s.state === "waiting" || s.state === "done")
         .length,
+      firewall: this.firewall,
     }));
+    this.system.whileAsleep = (sleep) => this.jyoti.whileAsleep(sleep);
   }
 
   private log(msg: string): void {
@@ -219,15 +303,21 @@ export class Daemon {
       );
     }
     for (const d of this.devices.all()) await this.mirrorOf(d.key);
-    this.caffeine.onAuto = (summary) =>
+    this.jyoti.onAuto = (summary) =>
       void this.journal.record({
         actor: { key: "local", name: "ekatva" },
-        action: "caffeine.auto",
+        action: "jyoti.auto",
         summary,
         input: null,
         ok: true,
       });
-    await this.caffeine.restore();
+    // Its state was caffeine.json, then jagaran.json, before it was named jyoti.
+    for (const old of ["jagaran.json", "caffeine.json"]) {
+      const was = join(this.o.stateDir, old);
+      if (existsSync(was) && !existsSync(join(this.o.stateDir, "jyoti.json")))
+        renameSync(was, join(this.o.stateDir, "jyoti.json"));
+    }
+    await this.jyoti.restore();
     await this.files.store
       .prune(this.o.config.undo.days, this.o.config.undo.max_gb * 1024 ** 3)
       .catch(() => undefined);
@@ -255,7 +345,77 @@ export class Daemon {
       );
       this.rendezvous.start(this.o.rendezvousEveryMs);
     }
-    if (this.o.mdns ?? this.o.config.advertise) await this.advertise();
+    if (this.o.desktopNotifications !== false) {
+      this.bridge = new NotificationBridge(
+        this.o.desktopNotifications ?? new DesktopNotifications((m) => this.log(m)),
+        () =>
+          [...this.peers.values()].map((p) => ({
+            key: p.key,
+            name: this.devices.get(p.key)?.name ?? "phone",
+            seesLaptop: this.devices.grantsOf(p.key).has("notifications"),
+            phone: p.phone,
+          })),
+        this.o.prompt ?? zenityPrompt,
+        (m) => this.log(m),
+      );
+      this.bridge.start();
+    }
+    // A root request (dvarapala, pramana): a notification on every phone that may answer it,
+    // gone once it's answered (here or there) or expired. The phone answers with the laptop's
+    // password; whichever side answers first wins.
+    const told = new Set<string>();
+    this.stopRootWatch = this.root.watch((list) => {
+      const now = new Set(list.map((r) => r.id));
+      for (const r of list) {
+        if (told.has(r.id)) continue;
+        told.add(r.id);
+        for (const p of this.rootPhones())
+          void p.phone.notifications.show
+            .mutate({
+              id: `root-${r.id}`,
+              app: "ekatva",
+              title: `Root access: ${r.requester}`,
+              text: `wants to run ${r.commands.length} command${r.commands.length === 1 ? "" : "s"} as root${r.reason ? `: ${r.reason}` : ""}. Open ekatva to answer with the laptop's password.`,
+            })
+            .catch(() => undefined);
+      }
+      for (const id of [...told])
+        if (!now.has(id)) {
+          told.delete(id);
+          for (const p of this.rootPhones())
+            void p.phone.notifications.close.mutate({ id: `root-${id}` }).catch(() => undefined);
+        }
+    });
+    this.clipSync.start();
+    if (this.o.beacon ?? this.o.config.advertise) {
+      this.beacon = new BeaconSender(
+        this.o.key,
+        () =>
+          this.devices
+            .all()
+            .map((d) => ({ key: d.key, direct: this.peers.get(d.key)?.via === "lan" })),
+        () => this.port,
+        {
+          log: (m) => this.log(m),
+          ...(this.o.beaconTargets ? { targets: this.o.beaconTargets } : {}),
+          ...(this.o.beaconPort ? { beaconPort: this.o.beaconPort } : {}),
+          ...(this.o.beaconEveryMs ? { everyMs: this.o.beaconEveryMs } : {}),
+        },
+      );
+      await this.beacon.start();
+    }
+    if (this.o.checkFirewall !== false) {
+      const check = async () => {
+        const was = this.firewall;
+        this.firewall = await firewallProblem(this.port).catch(() => null);
+        if (this.firewall && this.firewall.problem !== was?.problem)
+          this.log(`${this.firewall.problem}; fix: ${this.firewall.fix}`);
+        else if (was && !this.firewall)
+          this.log("the firewall lets phones on the same network in now");
+      };
+      await check();
+      this.timers.push(setInterval(() => void check(), 60_000));
+    }
     this.log(
       `ekatva ${VERSION}: listening on port ${this.port}, ${this.devices.all().length} paired device(s)`,
     );
@@ -266,11 +426,14 @@ export class Daemon {
     for (const p of this.peers.values()) p.close("the laptop's service stopped");
     this.peers.clear();
     for (const p of this.pendings.values()) p.decide({ ok: false, reason: "the laptop stopped" });
-    this.bonjour?.destroy();
+    this.beacon?.stop();
+    this.clipSync.stop();
+    this.stopRootWatch?.();
+    this.bridge?.stop();
     this.rendezvous?.stop();
     this.tunnel.stop();
     this.media.stop();
-    this.caffeine.shutdown();
+    this.jyoti.shutdown();
     this.agents.shutdown();
     await new Promise<void>((r) => (this.wss ? this.wss.close(() => r()) : r()));
     await new Promise<void>((r) => (this.http ? this.http.close(() => r()) : r()));
@@ -290,9 +453,18 @@ export class Daemon {
     // A Noise message is at most 64 KiB; nothing bigger is ever valid.
     this.wss = new WebSocketServer({ server: this.http, path: "/link", maxPayload: 65_535 });
     this.wss.on("connection", (ws, req) => {
-      const ip = String(req.headers["cf-connecting-ip"] ?? req.socket.remoteAddress ?? "?");
-      const via =
-        req.headers["cf-connecting-ip"] || req.headers["x-forwarded-for"] ? "tunnel" : "lan";
+      // Only a tunnel running on this laptop may say who it forwards for: from the
+      // network, a header is anyone's to write (and would dodge the rate limit).
+      const peer = req.socket.remoteAddress ?? "?";
+      const local = peer === "127.0.0.1" || peer === "::1" || peer === "::ffff:127.0.0.1";
+      const forwarded = local
+        ? (req.headers["cf-connecting-ip"] ?? req.headers["x-forwarded-for"])
+        : undefined;
+      const ip =
+        String(forwarded ?? peer)
+          .split(",")[0]
+          ?.trim() ?? peer;
+      const via = forwarded ? "tunnel" : "lan";
       if (this.shutOut(ip)) {
         ws.close(4005, "too many attempts; try again later");
         return;
@@ -330,6 +502,10 @@ export class Daemon {
     let channel: Channel;
     try {
       channel = await accept(webSocketTransport(ws as never), {
+        // Every 20 s, dropped after 60 s of silence: a vanished phone goes
+        // within a minute, and a phone in the background (which answers each
+        // ping) isn't woken more often than that.
+        keepaliveMs: this.o.keepaliveMs ?? 20_000,
         me: this.o.key,
         hello: { v: 1, name: this.o.config.name, info: { version: VERSION } },
         authorize: (c) => this.authorize(c, ip),
@@ -339,6 +515,9 @@ export class Daemon {
       this.log(`refused a connection from ${ip}: ${(e as Error).message}`);
       return;
     }
+    // A link that ended (timed out, replaced, unpaired) frees its socket at once: a
+    // half-open TCP connection from a phone that left would otherwise linger.
+    channel.onClose(() => setTimeout(() => ws.terminate(), 1000).unref?.());
     this.onPeer(channel, via);
   }
 
@@ -419,7 +598,7 @@ export class Daemon {
       channel.close("not paired");
       return;
     }
-    this.peers.get(key)?.close();
+    this.peers.get(key)?.close("replaced by a new connection");
     const stopServing = serveRouter({
       router: laptopRouter,
       channel,
@@ -431,7 +610,10 @@ export class Daemon {
         services: this.services,
       }),
       onError: ({ error, path }) => {
-        if (error.code === "INTERNAL_SERVER_ERROR") this.log(`${path}: ${error.message}`);
+        // A refused event from the phone is said too (which field, why; never
+        // its content): it used to fail silently, and the phone kept retrying.
+        if (error.code === "INTERNAL_SERVER_ERROR" || path === "inbox.report")
+          this.log(`${path}: ${error.code} ${error.message.slice(0, 300)}`);
       },
     });
     const wsClient = createWSClient({
@@ -441,7 +623,7 @@ export class Daemon {
     });
     const phone = createTRPCClient<PhoneRouter>({ links: [wsLink({ client: wsClient })] });
     let follow: { unsubscribe(): void } | null = null;
-    const close = (reason = "replaced by a new connection") => {
+    const close = (reason: string) => {
       follow?.unsubscribe();
       stopServing();
       void wsClient.close();
@@ -463,6 +645,7 @@ export class Daemon {
       void wsClient.close();
       void this.devices.seen(key);
       this.log(`${device.name} disconnected: ${reason}`);
+      this.calls.forget(key);
       this.emitDevices();
     });
     this.emitDevices();
@@ -518,17 +701,22 @@ export class Daemon {
   private makeServices(): LaptopServices {
     return {
       status: () => this.system.status(),
-      caffeine: {
-        get: () => this.caffeine.get(),
-        set: (level, minutes) => this.caffeine.set(level, minutes),
-        changes: (signal) => this.caffeine.changes(signal),
+      jyoti: {
+        get: () => this.jyoti.get(),
+        set: (level, minutes) => this.jyoti.set(level, minutes),
+        changes: (signal) => this.jyoti.changes(signal),
       },
       power: { lock: () => this.system.lock(), suspend: () => this.system.suspend() },
+      appearance: {
+        get: () => this.appearance.get(),
+        set: (mode) => this.appearance.set(mode),
+      },
       agents: {
         list: () => this.agents.list(),
         changes: (signal) => this.agents.changes(signal),
         projects: () => this.agents.projects(),
         tail: (id, lines) => this.agents.tail(id, lines),
+        transcript: (id, lines) => this.agents.transcript(id, lines),
         answer: (id, option, hash) => this.agents.answer(id, option, hash),
         reply: (id, text) => this.agents.reply(id, text),
         interrupt: (id) => this.agents.interrupt(id),
@@ -541,19 +729,55 @@ export class Daemon {
         seek: (player, position) => this.media.seek(player, position),
         volume: (change) => this.media.volume(change),
         brightness: (percent) => this.media.brightness(percent),
+        art: (id) => this.media.art(id),
       },
       clipboard: {
         get: () => this.system.clipboardGet(),
-        set: (text) => this.system.clipboardSet(text),
+        set: async (text) => {
+          this.clipSync.heard(text);
+          return this.system.clipboardSet(text);
+        },
+        sync: {
+          get: async () => this.clipSync.enabled,
+          set: async (on) => {
+            this.clipSync.set(on);
+            return {
+              value: null,
+              summary: on ? "Turned on one clipboard for both" : "Turned off the shared clipboard",
+              undo: { kind: "clipboard.sync", data: { on: !on } },
+            };
+          },
+        },
       },
       files: this.files,
       root: {
         pending: async () => this.root.list(),
         changes: (signal) => this.root.changes(signal),
         respond: (id, approve, password, allow) => this.root.respond(id, approve, password, allow),
+        history: () => this.root.history(),
       },
-      phoneEvent: async (from, e) =>
-        this.system.showPhoneEvent(this.devices.get(from)?.name ?? "phone", e),
+      notifications: {
+        history: async () => this.bridge?.history.list() ?? { items: [], icons: {} },
+        dismiss: async (id) => {
+          const ok = (await this.bridge?.dismissLaptop(id)) ?? false;
+          return {
+            value: null,
+            summary: ok ? "Dismissed a laptop notification" : "No such laptop notification",
+          };
+        },
+      },
+      input: this.input,
+      terminal: this.terminal,
+      share: this.share,
+      phoneEvent: async (from, e) => {
+        const name = this.devices.get(from)?.name ?? "phone";
+        // What, never who: a call's or a text's arrival in the journal.
+        if (e.kind === "call" || e.kind === "sms")
+          this.log(`${name}: ${e.kind}${e.kind === "call" ? ` ${e.state}` : ""}`);
+        if (e.kind === "call") this.calls.onEvent(from, name, e);
+        if (this.bridge && e.kind !== "battery") await this.bridge.fromPhoneEvent(from, name, e);
+        else await this.system.showPhoneEvent(name, e);
+      },
       undo: (u) => this.undo(u),
     };
   }
@@ -562,8 +786,13 @@ export class Daemon {
     const d = u.data as Record<string, unknown>;
     if (u.kind.startsWith("files.")) return this.files.undo(u);
     if (u.kind.startsWith("media.")) return this.media.undo(u.kind, d);
-    if (u.kind === "caffeine.set") return this.caffeine.undo(d as never);
+    // "caffeine.set", "jagaran.set": entries from before it was named jyoti.
+    if (u.kind === "jyoti.set" || u.kind === "jagaran.set" || u.kind === "caffeine.set")
+      return this.jyoti.undo(d as never);
+    if (u.kind === "appearance.set")
+      return this.appearance.set(d.mode === "light" ? "light" : "dark");
     if (u.kind === "clipboard.set") return this.system.clipboardSet(String(d.text ?? ""));
+    if (u.kind === "clipboard.sync") return this.services.clipboard.sync.set(Boolean(d.on));
     if (u.kind === "devices.restore") {
       const rec = d.record as DeviceRecord;
       await this.devices.put(rec);
@@ -576,7 +805,7 @@ export class Daemon {
     }
     if (u.kind === "devices.remove") {
       const rec = await this.devices.remove(String(d.key));
-      this.peers.get(String(d.key))?.close();
+      this.peers.get(String(d.key))?.close("unpaired");
       this.emitDevices();
       return {
         value: null,
@@ -619,7 +848,9 @@ export class Daemon {
   lanAddresses(): string[] {
     if (this.o.lan) return this.o.lan(this.port);
     const out: string[] = [];
-    for (const list of Object.values(networkInterfaces())) {
+    for (const [name, list] of Object.entries(networkInterfaces())) {
+      // Containers and VPNs: no phone is there, and each dead address costs it a timeout.
+      if (VIRTUAL.test(name)) continue;
       for (const a of list ?? []) {
         if (a.family === "IPv4" && !a.internal && !a.address.startsWith("169.254."))
           out.push(`${a.address}:${this.port}`);
@@ -735,7 +966,7 @@ export class Daemon {
       unpair: async (keyOrName) => {
         const d = this.findDevice(keyOrName);
         await this.devices.remove(d.key);
-        this.peers.get(d.key)?.close();
+        this.peers.get(d.key)?.close("unpaired");
         this.emitDevices();
         return {
           value: null,
@@ -743,6 +974,9 @@ export class Daemon {
           undo: { kind: "devices.restore", data: { record: d } },
         };
       },
+    },
+    calls: {
+      watch: (signal) => this.calls.changes(signal),
     },
     log: {
       list: async (host, after, limit) => {
@@ -787,7 +1021,28 @@ export class Daemon {
       ];
       if (typeof fn !== "function")
         throw new TRPCError({ code: "NOT_FOUND", message: `the phone has no ${path}` });
-      return fn(input);
+      const out = await fn(input);
+      // Answered or hung up from here: follow it at once. The phone's own call
+      // events can come late or not at all (Android holds broadcasts back from
+      // an app it has put in its background cache), and the banner would stay.
+      const key = keyOrName ? this.findDevice(keyOrName).key : [...this.peers.keys()].at(-1);
+      if (type !== "query" && key) {
+        const name = this.devices.get(key)?.name ?? "phone";
+        if (path === "calls.hangUp") this.calls.forget(key);
+        // Dialled from here: it's on the phone now, show it (its own event may lag).
+        if (path === "calls.dial") {
+          const number = String((input as { number?: unknown } | null)?.number ?? "");
+          this.calls.onEvent(key, name, { kind: "call", state: "active", number, contact: null });
+        }
+        if (path === "calls.answer" && this.calls.get()?.device === key)
+          this.calls.onEvent(key, name, {
+            kind: "call",
+            state: "active",
+            number: "",
+            contact: null,
+          });
+      }
+      return out;
     },
   };
 
@@ -820,22 +1075,6 @@ export class Daemon {
     }
     chmodSync(this.o.socketPath, 0o600);
   }
-
-  private async advertise(): Promise<void> {
-    try {
-      const { Bonjour } = await import("bonjour-service");
-      const b = new Bonjour();
-      b.publish({
-        name: `${this.o.config.name} (ekatva)`,
-        type: "ekatva",
-        port: this.port,
-        txt: { v: "1", id: this.id.slice(0, 11) },
-      });
-      this.bonjour = b;
-    } catch (e) {
-      this.log(`not advertising on the network: ${(e as Error).message}`);
-    }
-  }
 }
 
 export { LinkError, VERSION };
@@ -851,3 +1090,21 @@ export function agentLabel(user: string, agent: unknown): string {
       : "";
   return name ? `${user} via ${name}` : user;
 }
+
+/** Runs a command, ignoring how it ends (opening a link). */
+function runQuiet(cmd: string, args: string[]): Promise<void> {
+  return new Promise((resolve) => {
+    execFile(cmd, args, { timeout: 10_000 }, () => resolve());
+  });
+}
+
+/** A line of text typed on the laptop (a reply), or null when cancelled. */
+const zenityPrompt: Prompt = (title, text) =>
+  new Promise((resolve) => {
+    execFile(
+      "zenity",
+      ["--entry", `--title=${title}`, `--text=${text}`, "--width=420"],
+      { timeout: 10 * 60_000 },
+      (err, out) => resolve(err ? null : String(out).replace(/\n$/, "") || null),
+    );
+  });

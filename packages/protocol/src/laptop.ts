@@ -3,19 +3,23 @@
  * socket, to the desktop window and the CLI). The procedures here are the
  * contract; the daemon provides `LaptopServices`.
  */
+
 import { TRPCError } from "@trpc/server";
 import { z } from "zod";
-import type { Capability } from "./capabilities.js";
+import { type Appearance, AppearanceMode } from "./appearance.js";
+import { CAPABILITIES, type Capability, PRESETS } from "./capabilities.js";
 import { type Done, type FileService, filesRouter } from "./files.js";
 import { journalRouter, type Undoer } from "./journalRouter.js";
+import { type ShareService, shareRouter } from "./share.js";
 import { type Act, type BaseContext, createApi } from "./trpc.js";
 
 // ------------------------------------------------------------------ shapes
-export const CaffeineLevel = z.enum(["off", "on", "high"]);
-export type CaffeineLevel = z.infer<typeof CaffeineLevel>;
+/** off = Śānta; on = Akhaṇḍa; high = Nandādīpa (the wire keeps the older names). */
+export const JyotiLevel = z.enum(["off", "on", "high"]);
+export type JyotiLevel = z.infer<typeof JyotiLevel>;
 
-export const Caffeine = z.object({
-  level: CaffeineLevel,
+export const Jyoti = z.object({
+  level: JyotiLevel,
   /** When it was set, ms since the epoch. */
   since: z.number().nullable(),
   /** When it turns itself off, if it does. */
@@ -23,7 +27,7 @@ export const Caffeine = z.object({
   /** Whether "high" can keep the laptop on with the lid closed here. */
   lidHold: z.boolean(),
 });
-export type Caffeine = z.infer<typeof Caffeine>;
+export type Jyoti = z.infer<typeof Jyoti>;
 
 export const AgentState = z.enum(["working", "waiting", "idle", "done"]);
 
@@ -49,8 +53,25 @@ export const AgentSession = z.object({
   activity: z.string(),
   /** Since when it's in this state, ms since the epoch. */
   since: z.number(),
+  /** Its background agents still at work ("security-reviewer", "Reading the tests"). */
+  background: z.array(z.object({ name: z.string(), activity: z.string() })).default([]),
 });
 export type AgentSession = z.infer<typeof AgentSession>;
+
+/** A session's screen as a conversation (see the daemon's agentTranscript.ts). */
+export const AgentBlock = z.discriminatedUnion("kind", [
+  z.object({ kind: z.literal("you"), text: z.string() }),
+  z.object({ kind: z.literal("says"), text: z.string() }),
+  z.object({ kind: z.literal("tool"), title: z.string(), output: z.string() }),
+  z.object({ kind: z.literal("note"), text: z.string() }),
+]);
+export type AgentBlock = z.infer<typeof AgentBlock>;
+export const AgentTranscript = z.object({
+  blocks: z.array(AgentBlock),
+  /** What it's doing right now, when it's working. */
+  status: z.string().nullable(),
+});
+export type AgentTranscript = z.infer<typeof AgentTranscript>;
 
 export const Project = z.object({
   path: z.string(),
@@ -61,13 +82,22 @@ export type Project = z.infer<typeof Project>;
 
 export const Status = z.object({
   name: z.string(),
-  battery: z.object({ percent: z.number(), charging: z.boolean() }).nullable(),
+  battery: z
+    .object({
+      percent: z.number(),
+      charging: z.boolean(),
+      /** On the charger (charging, full, or held at a charge limit). Older laptops leave it out. */
+      plugged: z.boolean().optional(),
+    })
+    .nullable(),
   cpu: z.number().nullable(),
   temperature: z.number().nullable(),
   uptime: z.number(),
-  caffeine: CaffeineLevel,
+  jyoti: JyotiLevel,
   waiting: z.number(),
   locked: z.boolean().nullable(),
+  /** What keeps phones on the same network out (a firewall), with the fix; null when nothing. */
+  firewall: z.object({ problem: z.string(), fix: z.string() }).nullable().optional(),
 });
 export type Status = z.infer<typeof Status>;
 
@@ -84,8 +114,95 @@ export const RootRequest = z.object({
   state: z.enum(["waiting", "checking", "wrong"]),
   /** Wrong passwords so far. */
   attempts: z.number(),
+  /** The window's own id: its entry in the history, once it ends. */
+  ref: z.string().nullable().optional(),
 });
 export type RootRequest = z.infer<typeof RootRequest>;
+
+/** A tmux session on the laptop (the terminal opens the first: the one used last). */
+export const TerminalSession = z.object({
+  name: z.string(),
+  windows: z.number(),
+  /** A terminal at the laptop shows it now. */
+  attached: z.boolean(),
+  /** Last output and last attached, ms since the epoch. */
+  activity: z.number(),
+  lastAttached: z.number(),
+});
+export type TerminalSession = z.infer<typeof TerminalSession>;
+
+/** A terminal tab: a window of one of the laptop's tmux sessions. */
+export const TerminalTab = z.object({
+  /** tmux's window id: "@3". */
+  id: z.string(),
+  index: z.number(),
+  active: z.boolean(),
+  /** What runs in it now ("zsh", "nvim"). */
+  command: z.string(),
+  path: z.string(),
+  /** tmux's window name. */
+  name: z.string().default(""),
+});
+export type TerminalTab = z.infer<typeof TerminalTab>;
+
+/**
+ * A short hash of an answer, so a phone polling something big (a terminal's
+ * screen, an agent's conversation) is told "unchanged" instead of getting it
+ * all again. FNV-1a over its JSON: fast, and collisions only cost a skipped
+ * refresh until the next change.
+ */
+export function answerHash(value: unknown): string {
+  const text = JSON.stringify(value);
+  let h1 = 0x811c9dc5;
+  let h2 = 0x01000193;
+  for (let i = 0; i < text.length; i++) {
+    const c = text.charCodeAt(i);
+    h1 = Math.imul(h1 ^ c, 0x01000193);
+    h2 = Math.imul(h2 ^ c, 0x5bd1e995);
+  }
+  return ((h1 >>> 0).toString(36) + (h2 >>> 0).toString(36)).slice(0, 16);
+}
+
+/** An answer with its hash, or just "unchanged" when the asker has it already. */
+export type Unchanged = { unchanged: true; hash: string };
+export function unlessSame<T extends object>(
+  value: T,
+  unless: string | undefined,
+): (T & { hash: string }) | Unchanged {
+  const hash = answerHash(value);
+  return unless === hash ? { unchanged: true, hash } : { ...value, hash };
+}
+
+export const TerminalScreen = z.object({
+  /** The screen and some history above it, with ANSI colours. */
+  text: z.string(),
+  cursor: z.object({ x: z.number(), y: z.number() }),
+  cols: z.number(),
+  rows: z.number(),
+  /** Lines of history above the screen in `text`. */
+  above: z.number(),
+});
+export type TerminalScreen = z.infer<typeof TerminalScreen>;
+
+/** A finished root request: how it ended, who answered, each command's outcome. */
+export const RootHistoryEntry = z.object({
+  id: z.string(),
+  requester: z.string(),
+  reason: z.string(),
+  at: z.number(),
+  /** completed · denied · timeout · auth_failed · failed (the window's words) */
+  status: z.string(),
+  where: z.enum(["phone", "laptop"]),
+  commands: z.array(
+    z.object({
+      cmd: z.string(),
+      decision: z.string(),
+      state: z.string(),
+      exitCode: z.number().nullable(),
+    }),
+  ),
+});
+export type RootHistoryEntry = z.infer<typeof RootHistoryEntry>;
 
 export const PlayerStatus = z.enum(["Playing", "Paused", "Stopped"]);
 export const Player = z.object({
@@ -97,13 +214,19 @@ export const Player = z.object({
   title: z.string(),
   artist: z.string(),
   album: z.string(),
-  /** An http(s) URL or a small data: URL; null when there's none. */
-  art: z.string().nullable(),
+  /**
+   * The cover, by id: fetch it once with media.art({ id }) and keep it (it was sent
+   * whole, as a data: URL, on every poll). Null when there's none.
+   */
+  artId: z.string().nullable(),
   /** Milliseconds; null when the player doesn't say. */
   length: z.number().nullable(),
   position: z.number().nullable(),
   /** When `position` was read, ms since the epoch (a playing track moves on from there). */
   at: z.number(),
+  /** The songs either side of this one in its queue, when the player says (nāda, through MPD). */
+  prev: z.object({ title: z.string(), artist: z.string() }).nullable().optional(),
+  next: z.object({ title: z.string(), artist: z.string() }).nullable().optional(),
 });
 export type Player = z.infer<typeof Player>;
 
@@ -119,6 +242,33 @@ export type Media = z.infer<typeof Media>;
 export const MediaAction = z.enum(["play-pause", "play", "pause", "next", "previous", "stop"]);
 export type MediaAction = z.infer<typeof MediaAction>;
 
+export const MouseButton = z.enum(["left", "right", "middle"]);
+export type MouseButton = z.infer<typeof MouseButton>;
+/** A key or a chord: "Return", "ctrl+c", "super+shift+q". */
+export const KeyCombo = z
+  .string()
+  .regex(/^([a-z]+\+)*[A-Za-z0-9_]+$/, "a key like Return or ctrl+c")
+  .max(60);
+
+/** One of the laptop's notifications, as the phone's history shows it. */
+export interface LaptopNoteEntry {
+  id: string;
+  app: string;
+  title: string;
+  body: string;
+  /** ms since 1970. */
+  at: number;
+  /** 0 low, 1 normal, 2 urgent. */
+  urgency: number;
+  /** A key into `icons`, or null when the app has none. */
+  icon: string | null;
+}
+export interface LaptopNoteHistory {
+  items: LaptopNoteEntry[];
+  /** key → PNG in base64. */
+  icons: Record<string, string>;
+}
+
 export const PhoneEvent = z.discriminatedUnion("kind", [
   z.object({
     kind: z.literal("notification"),
@@ -127,7 +277,29 @@ export const PhoneEvent = z.discriminatedUnion("kind", [
     title: z.string(),
     text: z.string(),
     actions: z.array(z.string()),
+    /** Which of `actions` takes typed text (Reply), if any. */
+    reply: z.number().int().nullable().default(null),
     removed: z.boolean().default(false),
+    /** The app's package (com.whatsapp): its icon is cached by it. */
+    // null counts as none: phone apps sent null for "no picture", and every
+    // such notification was refused (and retried, blocking calls behind it).
+    package: z
+      .string()
+      .max(200)
+      .nullish()
+      .transform((v) => v ?? undefined),
+    /** The app's icon, a small PNG in base64 (newer phone apps send it). */
+    icon: z
+      .string()
+      .max(200_000)
+      .nullish()
+      .transform((v) => v ?? undefined),
+    /** The notification's own picture (a contact's photo), a PNG in base64. */
+    picture: z
+      .string()
+      .max(400_000)
+      .nullish()
+      .transform((v) => v ?? undefined),
   }),
   z.object({
     kind: z.literal("call"),
@@ -149,10 +321,10 @@ export type PhoneEvent = z.infer<typeof PhoneEvent>;
 // ---------------------------------------------------------------- services
 export interface LaptopServices {
   status(): Promise<Status>;
-  caffeine: {
-    get(): Promise<Caffeine>;
-    set(level: CaffeineLevel, minutes: number | null): Promise<Done<Caffeine>>;
-    changes(signal: AbortSignal | undefined): AsyncIterable<Caffeine>;
+  jyoti: {
+    get(): Promise<Jyoti>;
+    set(level: JyotiLevel, minutes: number | null): Promise<Done<Jyoti>>;
+    changes(signal: AbortSignal | undefined): AsyncIterable<Jyoti>;
   };
   power: {
     lock(): Promise<Done<null>>;
@@ -163,6 +335,7 @@ export interface LaptopServices {
     changes(signal: AbortSignal | undefined): AsyncIterable<AgentSession[]>;
     projects(): Promise<Project[]>;
     tail(id: string, lines: number): Promise<string>;
+    transcript(id: string, lines: number): Promise<AgentTranscript>;
     answer(id: string, option: string, questionHash: string): Promise<Done<null>>;
     reply(id: string, text: string): Promise<Done<null>>;
     interrupt(id: string): Promise<Done<null>>;
@@ -180,10 +353,19 @@ export interface LaptopServices {
     seek(player: string | null, position: number): Promise<Done<null>>;
     volume(change: { percent?: number; muted?: boolean }): Promise<Done<null>>;
     brightness(percent: number): Promise<Done<null>>;
+    /** A cover by its `artId`: an http(s) or data: URL (at most 256 KB), or null. */
+    art(id: string): Promise<string | null>;
+  };
+  appearance: {
+    /** The desktop's mode now (Vayu: varna's mode; else the GTK color-scheme). */
+    get(): Promise<Appearance>;
+    set(mode: AppearanceMode): Promise<Done<Appearance>>;
   };
   clipboard: {
     get(): Promise<string>;
     set(text: string): Promise<Done<null>>;
+    /** One clipboard across both: whether it's on, and turning it on or off. */
+    sync: { get(): Promise<boolean>; set(on: boolean): Promise<Done<null>> };
   };
   files: FileService;
   root: {
@@ -196,7 +378,34 @@ export interface LaptopServices {
       password: string | null,
       allow: number[] | null,
     ): Promise<Done<null>>;
+    /** The latest finished requests, newest first. */
+    history(): Promise<RootHistoryEntry[]>;
   } | null;
+  /** The laptop's own notifications (the phone dismisses one it shows, and reads their history). */
+  notifications: {
+    dismiss(id: string): Promise<Done<null>>;
+    /** The latest, newest first, with their apps' icons (each once). */
+    history(): Promise<LaptopNoteHistory>;
+  };
+  /** Keyboard and pointer, from the phone's trackpad. */
+  input: {
+    move(dx: number, dy: number): Promise<void>;
+    click(button: MouseButton, double: boolean): Promise<void>;
+    scroll(dx: number, dy: number): Promise<void>;
+    type(text: string): Promise<Done<null>>;
+    key(combo: string): Promise<Done<null>>;
+  };
+  share: ShareService;
+  terminal: {
+    sessions(): Promise<TerminalSession[]>;
+    tabs(session: string): Promise<TerminalTab[]>;
+    newTab(session: string): Promise<Done<TerminalTab[]>>;
+    newSession(name: string | null, cols: number, rows: number): Promise<Done<TerminalSession[]>>;
+    closeTab(id: string): Promise<Done<TerminalTab[]>>;
+    screen(id: string, history: number): Promise<TerminalScreen>;
+    send(id: string, text: string | null, keys: string[]): Promise<void>;
+    action(id: string, what: "split" | "scroll"): Promise<void>;
+  };
   /** Events the phone reports (its notifications, calls, messages, battery). */
   phoneEvent(from: string, e: PhoneEvent): Promise<void>;
   undo: Undoer;
@@ -232,6 +441,17 @@ export const Offer = z.object({
 });
 export type Offer = z.infer<typeof Offer>;
 
+/** A call on a phone right now, for the laptop's window. */
+export const CallNow = z.object({
+  device: z.string(),
+  name: z.string(),
+  state: z.enum(["ringing", "active"]),
+  number: z.string(),
+  contact: z.string().nullable(),
+  since: z.number(),
+});
+export type CallNow = z.infer<typeof CallNow>;
+
 /** What only this laptop's own user does: from the desktop window or the CLI. */
 export interface LocalServices {
   pair: {
@@ -245,6 +465,10 @@ export interface LocalServices {
     grant(key: string, grants: string[]): Promise<Done<Device>>;
     rename(key: string, name: string): Promise<Done<Device>>;
     unpair(key: string): Promise<Done<null>>;
+  };
+  calls: {
+    /** The phone's call right now (null when there's none), and every change. */
+    watch(signal: AbortSignal | undefined): AsyncIterable<CallNow | null>;
   };
   log: {
     /** "self" for this laptop's log, or a device's key for its mirrored log. */
@@ -296,6 +520,23 @@ const agents = api.router({
     })
     .input(z.object({ id: z.string(), lines: z.number().int().min(1).max(2000).default(200) }))
     .query(({ ctx, input }) => ctx.services.agents.tail(input.id, input.lines)),
+  transcript: p
+    .meta({
+      cap: "agents",
+      audit: true,
+      summary: (i) => `Read the conversation in ${(i as { id: string }).id}`,
+    })
+    .input(
+      z.object({
+        id: z.string(),
+        lines: z.number().int().min(20).max(3000).default(500),
+        /** The hash of the answer the phone has: if it's still the same, only that is said. */
+        unless: z.string().max(64).optional(),
+      }),
+    )
+    .query(async ({ ctx, input }) =>
+      unlessSame(await ctx.services.agents.transcript(input.id, input.lines), input.unless),
+    ),
   answer: p
     .meta({ cap: "agents" })
     .input(z.object({ id: z.string(), option: z.string().max(8), questionHash: z.string() }))
@@ -326,16 +567,16 @@ const agents = api.router({
     ),
 });
 
-const caffeine = api.router({
-  get: p.meta({ cap: "status" }).query(({ ctx }) => ctx.services.caffeine.get()),
+const jyoti = api.router({
+  get: p.meta({ cap: "status" }).query(({ ctx }) => ctx.services.jyoti.get()),
   watch: p
     .meta({ cap: "status" })
-    .subscription(({ ctx, signal }) => stream(ctx.services.caffeine.changes(signal))),
+    .subscription(({ ctx, signal }) => stream(ctx.services.jyoti.changes(signal))),
   set: p
     .meta({ cap: "power" })
     .input(
       z.object({
-        level: CaffeineLevel,
+        level: JyotiLevel,
         minutes: z
           .number()
           .int()
@@ -346,8 +587,16 @@ const caffeine = api.router({
       }),
     )
     .mutation(async ({ ctx, input }) =>
-      done(ctx, await ctx.services.caffeine.set(input.level, input.minutes)),
+      done(ctx, await ctx.services.jyoti.set(input.level, input.minutes)),
     ),
+});
+
+const appearance = api.router({
+  get: p.meta({ cap: "appearance" }).query(({ ctx }) => ctx.services.appearance.get()),
+  set: p
+    .meta({ cap: "appearance" })
+    .input(z.object({ mode: AppearanceMode }))
+    .mutation(async ({ ctx, input }) => done(ctx, await ctx.services.appearance.set(input.mode))),
 });
 
 const power = api.router({
@@ -362,6 +611,10 @@ const power = api.router({
 const Which = z.string().max(200).nullable().default(null);
 const media = api.router({
   get: p.meta({ cap: "media" }).query(({ ctx }) => ctx.services.media.get()),
+  art: p
+    .meta({ cap: "media" })
+    .input(z.object({ id: z.string().min(1).max(64) }))
+    .query(({ ctx, input }) => ctx.services.media.art(input.id)),
   watch: p
     .meta({ cap: "media" })
     .subscription(({ ctx, signal }) => stream(ctx.services.media.changes(signal))),
@@ -404,6 +657,15 @@ const clipboard = api.router({
     .meta({ cap: "clipboard" })
     .input(z.object({ text: z.string().max(1_000_000) }))
     .mutation(async ({ ctx, input }) => done(ctx, await ctx.services.clipboard.set(input.text))),
+  sync: api.router({
+    get: p.meta({ cap: "clipboard" }).query(({ ctx }) => ctx.services.clipboard.sync.get()),
+    set: p
+      .meta({ cap: "clipboard" })
+      .input(z.object({ on: z.boolean() }))
+      .mutation(async ({ ctx, input }) =>
+        done(ctx, await ctx.services.clipboard.sync.set(input.on)),
+      ),
+  }),
 });
 
 const rootService = (ctx: LaptopContext) => {
@@ -419,6 +681,9 @@ const root = api.router({
   watch: p
     .meta({ cap: "root" })
     .subscription(({ ctx, signal }) => stream(rootService(ctx).changes(signal))),
+  history: p
+    .meta({ cap: "root", audit: true, summary: () => "Read the root requests' history" })
+    .query(({ ctx }) => rootService(ctx).history()),
   respond: p
     .meta({ cap: "root" })
     .input(
@@ -435,6 +700,133 @@ const root = api.router({
         await rootService(ctx).respond(input.id, input.approve, input.password, input.allow),
       ),
     ),
+});
+
+const notifications = api.router({
+  history: p
+    .meta({ cap: "notifications", record: false })
+    .query(({ ctx }) => ctx.services.notifications.history()),
+  dismiss: p
+    .meta({ cap: "notifications" })
+    .input(z.object({ id: z.string().max(64) }))
+    .mutation(async ({ ctx, input }) =>
+      done(ctx, await ctx.services.notifications.dismiss(input.id)),
+    ),
+});
+
+/** Moving the pointer is far too frequent to log; typing and keys are logged (by length). */
+const input = api.router({
+  move: p
+    .meta({ cap: "input", record: false })
+    .input(z.object({ dx: z.number().min(-5000).max(5000), dy: z.number().min(-5000).max(5000) }))
+    .mutation(async ({ ctx, input }) => {
+      await ctx.services.input.move(input.dx, input.dy);
+      return null;
+    }),
+  click: p
+    .meta({ cap: "input", record: false })
+    .input(z.object({ button: MouseButton.default("left"), double: z.boolean().default(false) }))
+    .mutation(async ({ ctx, input }) => {
+      await ctx.services.input.click(input.button, input.double);
+      return null;
+    }),
+  scroll: p
+    .meta({ cap: "input", record: false })
+    .input(z.object({ dx: z.number().min(-100).max(100), dy: z.number().min(-100).max(100) }))
+    .mutation(async ({ ctx, input }) => {
+      await ctx.services.input.scroll(input.dx, input.dy);
+      return null;
+    }),
+  type: p
+    .meta({ cap: "input" })
+    .input(z.object({ text: z.string().min(1).max(10_000) }))
+    .mutation(async ({ ctx, input }) => done(ctx, await ctx.services.input.type(input.text))),
+  key: p
+    .meta({ cap: "input" })
+    .input(z.object({ combo: KeyCombo }))
+    .mutation(async ({ ctx, input }) => done(ctx, await ctx.services.input.key(input.combo))),
+});
+
+const TabId = z.string().regex(/^@\d+$/, "a terminal tab");
+/** A tmux session's name: never ":" or "." (tmux's separators) or a control character. */
+// biome-ignore lint/suspicious/noControlCharactersInRegex: refusing them is the point
+const SessionName = z.string().regex(/^[^:.\x00-\x1f$@%=][^:.\x00-\x1f]{0,63}$/, "a session name");
+
+/**
+ * The terminal: the laptop's own tmux sessions. Reading the screen and moving
+ * about isn't logged; typing is (by length).
+ */
+const terminal = api.router({
+  sessions: p.meta({ cap: "terminal" }).query(({ ctx }) => ctx.services.terminal.sessions()),
+  tabs: p
+    .meta({ cap: "terminal" })
+    .input(z.object({ session: SessionName }))
+    .query(({ ctx, input }) => ctx.services.terminal.tabs(input.session)),
+  newTab: p
+    .meta({ cap: "terminal" })
+    .input(z.object({ session: SessionName }))
+    .mutation(async ({ ctx, input }) =>
+      done(ctx, await ctx.services.terminal.newTab(input.session)),
+    ),
+  newSession: p
+    .meta({ cap: "terminal" })
+    .input(
+      z.object({
+        name: SessionName.nullable().default(null),
+        cols: z.number().int().min(20).max(400).default(60),
+        rows: z.number().int().min(5).max(200).default(30),
+      }),
+    )
+    .mutation(async ({ ctx, input }) =>
+      done(ctx, await ctx.services.terminal.newSession(input.name, input.cols, input.rows)),
+    ),
+  closeTab: p
+    .meta({ cap: "terminal" })
+    .input(z.object({ id: TabId }))
+    .mutation(async ({ ctx, input }) => done(ctx, await ctx.services.terminal.closeTab(input.id))),
+  screen: p
+    .meta({ cap: "terminal" })
+    .input(
+      z.object({
+        id: TabId,
+        history: z.number().int().min(0).max(2000).default(200),
+        /** The hash of the screen the phone has: if it's still the same, only that is said. */
+        unless: z.string().max(64).optional(),
+      }),
+    )
+    .query(async ({ ctx, input }) =>
+      unlessSame(await ctx.services.terminal.screen(input.id, input.history), input.unless),
+    ),
+  type: p
+    .meta({ cap: "terminal" })
+    .input(
+      z.object({
+        id: TabId,
+        text: z.string().min(1).max(10_000),
+        enter: z.boolean().default(true),
+      }),
+    )
+    .mutation(async ({ ctx, input }) => {
+      await ctx.services.terminal.send(input.id, input.text, input.enter ? ["Enter"] : []);
+      act(ctx).summary =
+        `Typed in the terminal (${input.text.length} characters${input.enter ? ", Enter" : ""})`;
+      return null;
+    }),
+  keys: p
+    .meta({ cap: "terminal", record: false })
+    .input(z.object({ id: TabId, keys: z.array(z.string().max(12)).min(1).max(32) }))
+    .mutation(async ({ ctx, input }) => {
+      await ctx.services.terminal.send(input.id, null, input.keys);
+      return null;
+    }),
+  /** tmux itself: split the window, or scroll back through it (copy mode). */
+  action: p
+    .meta({ cap: "terminal", record: false })
+    .input(z.object({ id: TabId, action: z.enum(["split", "scroll"]) }))
+    .mutation(async ({ ctx, input }) => {
+      await ctx.services.terminal.action(input.id, input.action);
+      return null;
+    }),
 });
 
 const inbox = api.router({
@@ -462,13 +854,18 @@ function capOf(action: string): Capability | undefined {
 export const laptopRouter = api.router({
   status: p.meta({ cap: "status" }).query(({ ctx }) => ctx.services.status()),
   agents,
-  caffeine,
+  jyoti,
   power,
   media,
+  appearance,
   clipboard,
   files: filesRouter(api, "files", "files.private", (ctx) => ctx.services.files),
   journal: journalRouter(api, "journal", (ctx) => ctx.services.undo, capOf),
   root,
+  notifications,
+  input,
+  terminal,
+  share: shareRouter(api, "share", (ctx) => ctx.services.share),
   inbox,
 });
 
@@ -481,6 +878,15 @@ const local = (ctx: LaptopContext) => {
 const Grants = z.array(z.string()).max(64);
 
 const admin = api.router({
+  /** What each permission is, and the presets: one source for every window. */
+  capabilities: p
+    .meta({ cap: "admin" })
+    .query(() => ({ capabilities: CAPABILITIES, presets: PRESETS })),
+  calls: api.router({
+    watch: p
+      .meta({ cap: "admin" })
+      .subscription(({ ctx, signal }) => stream(local(ctx).calls.watch(signal))),
+  }),
   pair: api.router({
     start: p
       .meta({ cap: "admin" })

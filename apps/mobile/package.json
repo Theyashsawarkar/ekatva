@@ -21,7 +21,6 @@
     "expo": "~58.0.19",
     "expo-battery": "~58.0.3",
     "expo-build-properties": "~58.0.11",
-    "expo-camera": "~58.0.12",
     "expo-clipboard": "~58.0.4",
     "expo-constants": "~58.0.13",
     "expo-crypto": "~58.0.7",
@@ -31,6 +30,7 @@
     "expo-font": "~58.0.10",
     "expo-haptics": "~58.0.7",
     "expo-keep-awake": "~58.0.3",
+    "expo-linear-gradient": "~58.0.4",
     "expo-linking": "~58.0.14",
     "expo-local-authentication": "~58.0.2",
     "expo-network": "~58.0.4",
@@ -46,17 +46,16 @@
     "react-native-reanimated": "4.7.1",
     "react-native-safe-area-context": "~5.10.1",
     "react-native-screens": "~4.30.0",
-    "react-native-url-polyfill": "4.0.0",
+    "react-native-svg": "15.16.0",
     "react-native-worklets": "0.13.0",
-    "zod": "4.6.7",
-    "@expo/vector-icons": "^15.1.1"
+    "zod": "4.6.7"
   },
   "devDependencies": {
-    "@types/react": "~19.3.0",
-    "typescript": "~6.0.3",
-    "vitest": "5.0.5",
     "@ekatva/daemon": "workspace:*",
-    "ws": "8.22.0",
-    "@types/ws": "8.18.2"
+    "@types/react": "~19.3.0",
+    "@types/ws": "8.18.2",
+    "typescript": "7.0.2",
+    "vitest": "5.0.5",
+    "ws": "8.22.0"
   }
 }

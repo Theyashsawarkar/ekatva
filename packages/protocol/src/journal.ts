@@ -20,7 +20,7 @@ export interface Actor {
 }
 
 export interface Undo {
-  /** Which undo handler knows how: "files.restore", "caffeine.set", … */
+  /** Which undo handler knows how: "files.restore", "jyoti.set", … */
   kind: string;
   data: unknown;
 }
@@ -34,7 +34,7 @@ export interface Entry {
   /** The device this happened on (the chain's owner), its key. */
   host: string;
   actor: Actor;
-  /** The procedure: "files.write", "caffeine.set", "agents.answer". */
+  /** The procedure: "files.write", "jyoti.set", "agents.answer". */
   action: string;
   /** One readable line: "Wrote ~/notes/todo.md (1.2 kB)". */
   summary: string;
@@ -73,7 +73,7 @@ export function entryHash(e: Omit<Entry, "hash">): string {
 }
 
 const SECRET = /pass(word|phrase)?|secret|token|pin|otp|private|cookie|auth/i;
-const BULK = /^(content|data|text|body|bytes|clipboard)$/i;
+const BULK = /^(content|data|text|body|bytes|clipboard|reply)$/i;
 
 /**
  * A copy of `input` safe to keep: secrets become "[redacted]", bulk
@@ -110,6 +110,34 @@ export interface JournalStore {
   get(seq: number): Promise<Entry | null>;
 }
 
+/**
+ * The index of the first entry with seq above `after`, in entries kept in
+ * rising seq order (a log is appended in order): a binary search, so reading
+ * a page and checking a whole chain don't grow with the square of the log.
+ */
+export function firstAfter(entries: readonly Entry[], after: number): number {
+  let lo = 0;
+  let hi = entries.length;
+  while (lo < hi) {
+    const mid = (lo + hi) >>> 1;
+    if ((entries[mid] as Entry).seq > after) hi = mid;
+    else lo = mid + 1;
+  }
+  return lo;
+}
+
+/** Entries after `after`, at most `limit` of them (in rising seq order). */
+export function pageAfter(entries: readonly Entry[], after: number, limit: number): Entry[] {
+  const i = firstAfter(entries, after);
+  return entries.slice(i, i + limit);
+}
+
+/** The entry with this seq, or null. */
+export function entryAt(entries: readonly Entry[], seq: number): Entry | null {
+  const e = entries[firstAfter(entries, seq - 1)];
+  return e && e.seq === seq ? e : null;
+}
+
 export class MemoryStore implements JournalStore {
   entries: Entry[] = [];
   async append(e: Entry) {
@@ -119,10 +147,10 @@ export class MemoryStore implements JournalStore {
     return this.entries.at(-1) ?? null;
   }
   async since(after: number, limit: number) {
-    return this.entries.filter((e) => e.seq > after).slice(0, limit);
+    return pageAfter(this.entries, after, limit);
   }
   async get(seq: number) {
-    return this.entries.find((e) => e.seq === seq) ?? null;
+    return entryAt(this.entries, seq);
   }
 }
 
@@ -244,6 +272,14 @@ export class Mirror {
     const p = verify(entries, last);
     if (p) return p;
     for (const e of entries) await this.store.append(e);
+    for (const cb of this.listeners) cb(entries);
     return null;
+  }
+
+  private listeners = new Set<(entries: Entry[]) => void>();
+  /** New entries kept (already verified against what was here). */
+  onEntries(cb: (entries: Entry[]) => void): () => void {
+    this.listeners.add(cb);
+    return () => this.listeners.delete(cb);
   }
 }

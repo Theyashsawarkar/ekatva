@@ -14,6 +14,8 @@ export interface FsStat {
 
 export interface Fs {
   list(dir: string): Promise<string[]>;
+  /** A folder's entries with their details in one call, where the platform can (Android). */
+  listDetailed?(dir: string): Promise<(FsStat & { name: string })[]>;
   stat(path: string): Promise<FsStat | null>;
   /** Base64. */
   read(path: string, offset: number, length: number): Promise<string>;
@@ -113,13 +115,26 @@ export class PhoneFiles implements FileService {
 
   async list(path: string, _a: FileAccess) {
     const dir = this.resolve(path);
-    const names = await this.fs.list(dir);
     const out: FileEntry[] = [];
-    for (const n of names) {
-      const p = join(dir, n);
-      if (inside(p, this.undoDir)) continue;
-      out.push(await this.entry(p));
-    }
+    if (this.fs.listDetailed) {
+      // One native call for the whole folder (a stat per name cost several calls each).
+      for (const e of await this.fs.listDetailed(dir)) {
+        const p = join(dir, e.name);
+        if (inside(p, this.undoDir)) continue;
+        out.push({
+          name: e.name,
+          path: this.show(p),
+          kind: e.isDir ? "dir" : "file",
+          size: e.size,
+          mtime: e.mtime,
+        });
+      }
+    } else
+      for (const n of await this.fs.list(dir)) {
+        const p = join(dir, n);
+        if (inside(p, this.undoDir)) continue;
+        out.push(await this.entry(p));
+      }
     return out.sort((x, y) =>
       (x.kind === "dir") !== (y.kind === "dir")
         ? x.kind === "dir"

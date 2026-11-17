@@ -1,9 +1,10 @@
-import { router, useLocalSearchParams } from "expo-router";
+import { useLocalSearchParams } from "expo-router";
 import { useEffect, useState } from "react";
-import { Image, ScrollView } from "react-native";
-import { Button, Card, Screen, s, T } from "../ui/kit";
+import { Image, ScrollView, View } from "react-native";
+import { errorText } from "../ui/errors";
+import { Btn, Navbar, Page, Panel, Txt } from "../ui/lac";
 import { useApp, useLink } from "../ui/state";
-import { c } from "../ui/theme";
+import { k } from "../ui/theme";
 import { downloadToPhone, fetchFile, size } from "../ui/transfer";
 
 const PREVIEW = 512 * 1024;
@@ -26,7 +27,7 @@ export default function FilePreview() {
     if (isImage && bytes < 20 * 1024 * 1024) {
       fetchFile(client, p.path, p.name).then(
         (f) => setImage(f.uri),
-        (e: Error) => setError(e.message),
+        (e: unknown) => setError(errorText(e)),
       );
     } else if (isText) {
       client.files.read.query({ path: p.path, offset: 0, length: PREVIEW }).then(
@@ -36,43 +37,60 @@ export default function FilePreview() {
           for (let i = 0; i < bin.length; i++) arr[i] = bin.charCodeAt(i);
           setText(new TextDecoder().decode(arr) + (r.eof ? "" : "\n\n… (first 512 kB)"));
         },
-        (e: Error) => setError(e.message),
+        (e: unknown) => setError(errorText(e)),
       );
     }
   }, [client, p.path, p.name, isImage, isText, bytes]);
 
   return (
-    <Screen
-      title={p.name}
-      right={<Button label="Back" icon="chevron-back" onPress={() => router.back()} />}
-      scroll={false}
-    >
-      <T size={12} color={c.subtle}>
+    <Page scroll={false} bottom={24}>
+      <Navbar back="Files" mid={p.name} />
+      <Txt size={13} color={k.sub} lines={1} style={{ marginBottom: 12 }}>
         {p.path} · {size(bytes)}
-      </T>
-      {error ? <T color={c.red}>{error}</T> : null}
+      </Txt>
+      {error ? (
+        <Txt size={14} color={k.rose} style={{ marginBottom: 12 }}>
+          {error}
+        </Txt>
+      ) : null}
       {image ? (
-        <Image source={{ uri: image }} style={{ flex: 1, borderRadius: 12 }} resizeMode="contain" />
+        // Decoded at the screen's size (it's a file: uri), not the photo's: a
+        // 4000×3000 photo would otherwise take ~48 MB of memory.
+        <Image
+          source={{ uri: image }}
+          style={{ flex: 1, borderRadius: 20 }}
+          resizeMode="contain"
+          resizeMethod="resize"
+        />
       ) : null}
       {text !== null ? (
         <ScrollView
-          style={{ flex: 1, backgroundColor: "rgba(0,0,0,0.35)", borderRadius: 12 }}
-          contentContainerStyle={{ padding: 10 }}
+          style={{
+            flex: 1,
+            backgroundColor: k.term,
+            borderRadius: 20,
+            borderWidth: 1,
+            borderColor: k.line,
+          }}
+          contentContainerStyle={{ padding: 12 }}
         >
-          <T mono style={s.mono}>
+          <Txt mono size={12.5} color="#e6dfd5" style={{ lineHeight: 19.4 }}>
             {text}
-          </T>
+          </Txt>
         </ScrollView>
       ) : null}
       {!isImage && !isText ? (
-        <Card>
-          <T color={c.dim}>No preview for this kind of file.</T>
-        </Card>
+        <Panel style={{ padding: 16 }}>
+          <Txt size={14} color={k.sub}>
+            No preview for this kind of file.
+          </Txt>
+        </Panel>
       ) : null}
-      <Button
+      {(isImage && !image) || (isText && text === null) ? <View style={{ flex: 1 }} /> : null}
+      <Btn
         label="Download to the phone"
         icon="download"
-        kind="primary"
+        kind="solid"
         disabled={!client}
         onPress={() =>
           client &&
@@ -86,6 +104,6 @@ export default function FilePreview() {
           })
         }
       />
-    </Screen>
+    </Page>
   );
 }

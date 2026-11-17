@@ -7,16 +7,15 @@
     "icon": "./assets/images/icon.png",
     "scheme": "ekatva",
     "userInterfaceStyle": "dark",
-    "backgroundColor": "#191724",
+    "backgroundColor": "#16121b",
     "android": {
       "package": "io.github.theyashsawarkar.ekatva",
       "adaptiveIcon": {
-        "backgroundColor": "#191724",
+        "backgroundColor": "#16121b",
         "foregroundImage": "./assets/images/adaptive-foreground.png",
         "monochromeImage": "./assets/images/adaptive-monochrome.png"
       },
       "permissions": [
-        "android.permission.CAMERA",
         "android.permission.USE_BIOMETRIC",
         "android.permission.VIBRATE",
         "android.permission.WAKE_LOCK",
@@ -25,37 +24,92 @@
       ],
       "blockedPermissions": [
         "android.permission.RECORD_AUDIO",
-        "android.permission.SYSTEM_ALERT_WINDOW"
+        "android.permission.SYSTEM_ALERT_WINDOW",
+        "android.permission.CAMERA"
       ],
       "allowBackup": false,
+      "intentFilters": [
+        {
+          "action": "SEND",
+          "category": ["DEFAULT"],
+          "data": [
+            {
+              "mimeType": "*/*"
+            }
+          ]
+        },
+        {
+          "action": "SEND_MULTIPLE",
+          "category": ["DEFAULT"],
+          "data": [
+            {
+              "mimeType": "*/*"
+            }
+          ]
+        }
+      ],
       "predictiveBackGestureEnabled": false
     },
     "plugins": [
       "expo-router",
       [
         "expo-splash-screen",
-        { "backgroundColor": "#191724", "image": "./assets/images/splash.png", "imageWidth": 120 }
-      ],
-      [
-        "expo-camera",
         {
-          "cameraPermission": "ekatva reads your laptop's pairing code with the camera.",
-          "recordAudioAndroid": false
+          "backgroundColor": "#16121b",
+          "image": "./assets/images/splash.png",
+          "imageWidth": 120
         }
       ],
-      ["expo-local-authentication", { "faceIDPermission": "ekatva uses Face ID to open." }],
-      ["expo-secure-store", { "configureAndroidBackup": false }],
+      [
+        "expo-local-authentication",
+        {
+          "faceIDPermission": "ekatva uses Face ID to open."
+        }
+      ],
+      [
+        "expo-secure-store",
+        {
+          "configureAndroidBackup": false
+        }
+      ],
       [
         "expo-build-properties",
         {
           "android": {
             "usesCleartextTraffic": true,
             "minSdkVersion": 29,
-            "extraProguardRules": "-keep class com.google.mlkit.** { *; }\n-keep class com.google.android.gms.internal.mlkit_vision_** { *; }\n-keep class com.google.android.libraries.barhopper.** { *; }\n-keep class com.google.photos.vision.barhopper.** { *; }\n"
+            "extraProguardRules": "-keep class io.github.theyashsawarkar.ekatva.** { *; }\n",
+            "enableMinifyInReleaseBuilds": true,
+            "enableShrinkResourcesInReleaseBuilds": true,
+            "enablePngCrunchInReleaseBuilds": true,
+            "useLegacyPackaging": true,
+            "gifEnabled": false,
+            "webpEnabled": false,
+            "buildArchs": ["arm64-v8a"]
           }
         }
-      ]
+      ],
+      [
+        "expo-font",
+        {
+          "fonts": [
+            "./assets/fonts/Bricolage-600.ttf",
+            "./assets/fonts/Bricolage-700.ttf",
+            "./assets/fonts/JetBrainsMono-400.ttf",
+            "./assets/fonts/JetBrainsMono-600.ttf",
+            "./assets/fonts/Onest-400.ttf",
+            "./assets/fonts/Onest-500.ttf",
+            "./assets/fonts/Onest-600.ttf",
+            "./assets/fonts/Onest-700.ttf",
+            "./assets/fonts/Tiro-400.ttf"
+          ]
+        }
+      ],
+      "./plugins/with-english-only.js"
     ],
-    "experiments": { "typedRoutes": true, "reactCompiler": true }
+    "experiments": {
+      "typedRoutes": true,
+      "reactCompiler": true
+    }
   }
 }

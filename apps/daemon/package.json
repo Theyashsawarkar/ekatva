@@ -26,7 +26,6 @@
     "@noble/hashes": "2.4.0",
     "@trpc/client": "11.19.0",
     "@trpc/server": "11.19.0",
-    "bonjour-service": "1.4.4",
     "qrcode-terminal": "0.12.0",
     "smol-toml": "1.9.1",
     "ws": "8.22.0",

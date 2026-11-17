@@ -1,10 +1,12 @@
 /**
- * The phone's end of the link: pairing from a QR code, connecting (the
- * laptop's LAN addresses first, then its tunnel), reconnecting with
- * backoff, serving the phone's API, and keeping a verified copy of the
- * laptop's action log.
+ * The phone's end of the link: pairing from a QR code, connecting (where
+ * the laptop's beacon says it is on this network, then its saved LAN
+ * addresses, then its tunnel), reconnecting with backoff, moving to the
+ * direct path as soon as the laptop is heard on the same network, serving
+ * the phone's API, and keeping a verified copy of the laptop's action log.
  */
 import {
+  beaconKey,
   type Channel,
   CLOSE,
   connect,
@@ -13,6 +15,7 @@ import {
   mailbox,
   type Ntfy,
   nonce,
+  openBeacon,
   PORT_LAPTOP,
   PORT_PHONE,
   parseOffer,
@@ -21,10 +24,8 @@ import {
 } from "@ekatva/link";
 import {
   channelWebSocket,
-  type Entry,
   type Journal,
   type LaptopRouter,
-  type Mirror,
   type PhoneServices,
   phoneRouter,
   serveRouter,
@@ -36,6 +37,14 @@ import type { Secrets } from "./vault";
 /** Opens a WebSocket to `url`, as a transport, or fails within `timeoutMs`. */
 export type Opener = (url: string, timeoutMs: number) => Promise<Transport>;
 
+/** Listens for datagrams on the beacon port; returns a function that stops listening. */
+export type Beacons = (cb: (from: string, data: Uint8Array) => void) => () => void;
+
+/** A beacon's address is trusted for this long (it's sent every 3 s). */
+const NEAR_FOR_MS = 30_000;
+/** Beacons can't make the phone knock more often than this. */
+const NEAR_RETRY_MS = 5_000;
+
 export type LinkState =
   | { status: "unpaired" }
   | { status: "offline"; laptop: string; error: string | null; retryAt: number | null }
@@ -46,7 +55,6 @@ export interface LinkDeps {
   secrets: Secrets;
   laptops: Laptops;
   journal: Journal;
-  mirror: (laptopKey: string) => Promise<Mirror>;
   services: PhoneServices;
   open: Opener;
   hello: { name: string; info: Record<string, string> };
@@ -56,11 +64,41 @@ export interface LinkDeps {
   ntfy?: Ntfy;
   /** How long to wait for the laptop's answer in the mailbox. */
   rendezvousWaitMs?: number;
+  /** The laptop's beacons on this network. */
+  beacons?: Beacons;
+  /** Is there any network at all? (No: skip the rendezvous.) */
+  online?: () => Promise<boolean>;
 }
 
-const MAX_BACKOFF_MS = 30_000;
+/** Retrying while the app is in front: quick, never more than this apart. */
+const FOREGROUND_MAX_MS = 5_000;
+/** In the background (the foreground service keeps it linked): gentler. */
+const BACKGROUND_MAX_MS = 60_000;
+/** Replaced by another connection from this phone: wait it out, don't fight. */
+const REPLACED_WAIT_MS = 30_000;
+/** While in front, the laptop must answer a status call this often… */
+const HEARTBEAT_MS = 15_000;
+/** Linked through the tunnel and in the background this long: stop listening for beacons. */
+const BEACONS_BACKGROUND_MS = 3 * 60_000;
+/** …within this long, or the connection counts as dead. */
+const HEARTBEAT_TIMEOUT_MS = 8_000;
+/** The channel's own ping; it gives up after three silent ones. Often in front… */
+const KEEPALIVE_MS = 15_000;
+/** …rarely in the background, so the radio can sleep. */
+const BACKGROUND_KEEPALIVE_MS = 50_000;
+/** Ask the rendezvous at most this often in front… */
+const RENDEZVOUS_FG_MS = 2 * 60_000;
+/** …and in the background (each ask is a minute of polling over the internet). */
+const RENDEZVOUS_BG_MS = 20 * 60_000;
+/** How long the laptop may take to let a known phone in. */
+const DECISION_MS = 15_000;
 
 export class LinkManager {
+  /**
+   * The one link running in this JS runtime. Starting another stops it: two
+   * links from one phone keep replacing each other at the laptop.
+   */
+  static active: LinkManager | null = null;
   state: LinkState = { status: "unpaired" };
   client: TRPCClient<LaptopRouter> | null = null;
   private channel: Channel | null = null;
@@ -70,6 +108,20 @@ export class LinkManager {
   private retryTimer: ReturnType<typeof setTimeout> | null = null;
   private busy: Promise<void> | null = null;
   private listeners = new Set<(s: LinkState) => void>();
+  private stopBeacons: (() => void) | null = null;
+  private beaconKeys = new Map<string, Uint8Array>();
+  /** Where a laptop was last heard on this network. */
+  private near = new Map<string, { addr: string; at: number }>();
+  private lastNearTry = 0;
+  private switching = false;
+  private via: "lan" | "tunnel" | null = null;
+  private heartbeat: ReturnType<typeof setInterval> | null = null;
+  private beaconTimer: ReturnType<typeof setTimeout> | null = null;
+  /** When the app went to the background (null while in front). */
+  private backgroundSince: number | null = null;
+  private foreground = true;
+  /** When the rendezvous was last asked; 0: ask whenever needed. */
+  private lastAsk = 0;
 
   constructor(private readonly d: LinkDeps) {}
 
@@ -87,7 +139,43 @@ export class LinkManager {
     if (s.status !== this.state?.status || ("error" in s && s.error))
       console.info(`[ekatva link] ${s.status}${"error" in s && s.error ? `: ${s.error}` : ""}`);
     this.state = s;
+    this.tuneBeacons();
     for (const cb of this.listeners) cb(s);
+  }
+
+  /**
+   * Beacons (and Android's Wi-Fi multicast lock, which costs battery) only
+   * while they can help: not while linked directly on this network.
+   */
+  private tuneBeacons(): void {
+    const s = this.state;
+    const online = s.status === "online";
+    const direct = online && this.via === "lan";
+    // Linked through the tunnel and in the background for a while: the laptop
+    // isn't coming onto this Wi-Fi soon enough to keep the lock for it.
+    const settled =
+      online &&
+      !this.foreground &&
+      this.backgroundSince !== null &&
+      this.now() - this.backgroundSince >= BEACONS_BACKGROUND_MS;
+    if (this.wanted && !direct && !settled) this.listen();
+    else this.unlisten();
+  }
+
+  /** The heartbeat runs only in front (a timer that ticks in the background for nothing costs wakeups). */
+  private startHeartbeat(): void {
+    if (this.heartbeat || !this.foreground || !this.channel?.isOpen) return;
+    this.heartbeat = setInterval(() => void this.check(), HEARTBEAT_MS);
+  }
+
+  private stopHeartbeat(): void {
+    if (this.heartbeat) clearInterval(this.heartbeat);
+    this.heartbeat = null;
+  }
+
+  private unlisten(): void {
+    this.stopBeacons?.();
+    this.stopBeacons = null;
   }
 
   private urls(lan: string[], url: string | null): { url: string; via: "lan" | "tunnel" }[] {
@@ -99,6 +187,8 @@ export class LinkManager {
 
   /** Pairs with the laptop in the QR code; `onSas` gets the four emoji to show. */
   async pair(uri: string, onSas: (emoji: string[]) => void): Promise<LaptopRecord> {
+    if (LinkManager.active && LinkManager.active !== this) LinkManager.active.stop();
+    LinkManager.active = this;
     const offer = parseOffer(uri);
     const urls = this.urls(offer.lan, offer.url ?? null);
     if (!urls.length) throw new Error("the code has no address to reach the laptop at");
@@ -133,6 +223,7 @@ export class LinkManager {
       await this.d.laptops.put(record);
       this.attach(channel, record, via, welcome);
       this.wanted = true;
+      this.listen();
       return record;
     }
     throw new Error(
@@ -143,17 +234,164 @@ export class LinkManager {
 
   /** Keep connected from now on. */
   start(): void {
+    if (LinkManager.active && LinkManager.active !== this) LinkManager.active.stop();
+    LinkManager.active = this;
     this.wanted = true;
+    this.listen();
     void this.connectNow();
   }
 
-  /** Try again right away (the app came forward, the network changed). */
+  private listen(): void {
+    if (this.stopBeacons || !this.d.beacons) return;
+    this.stopBeacons = this.d.beacons((from, data) => this.onBeacon(from, data));
+  }
+
+  /** A datagram on the beacon port: if one of our laptops sent it, go to it directly. */
+  private onBeacon(from: string, data: Uint8Array): void {
+    if (!/^\d{1,3}(\.\d{1,3}){3}$/.test(from)) return;
+    for (const l of this.d.laptops.all()) {
+      let key = this.beaconKeys.get(l.key);
+      if (!key) {
+        key = beaconKey(this.d.secrets.identity, fromB64u(l.key));
+        this.beaconKeys.set(l.key, key);
+      }
+      const b = openBeacon(key, data, this.now());
+      if (!b) continue;
+      const addr = `${from}:${b.port}`;
+      const was = this.near.get(l.key);
+      this.near.set(l.key, { addr, at: this.now() });
+      if (was?.addr !== addr) console.info("[ekatva link] heard the laptop on this network");
+      this.onNear(l, addr);
+      return;
+    }
+  }
+
+  private onNear(laptop: LaptopRecord, addr: string): void {
+    if (!this.wanted) return;
+    const s = this.state;
+    if (s.status === "online") {
+      if (s.laptop === laptop.key && this.via === "tunnel") void this.goDirect(laptop, addr);
+      return;
+    }
+    // Offline and waiting to retry: try now, where it is (but not on every beacon).
+    if (s.status === "offline" && this.now() - this.lastNearTry > NEAR_RETRY_MS) {
+      if (s.retryAt === null && s.error && /pair again/.test(s.error)) return;
+      this.lastNearTry = this.now();
+      void this.connectNow();
+    }
+    // Connecting: the attempt in progress picks it up (see ask()).
+  }
+
+  /** Connected through the tunnel, and the laptop is right here: move to the direct path. */
+  private async goDirect(laptop: LaptopRecord, addr: string): Promise<void> {
+    if (this.switching || this.now() - this.lastNearTry < NEAR_RETRY_MS) return;
+    this.switching = true;
+    this.lastNearTry = this.now();
+    try {
+      const t = await this.d.open(`ws://${addr}/link`, 4000);
+      const { channel, welcome } = await connect(t, {
+        me: this.d.secrets.identity,
+        expect: fromB64u(laptop.key),
+        hello: { v: 1, name: this.d.hello.name, info: this.d.hello.info },
+        decisionTimeoutMs: DECISION_MS,
+        keepaliveMs: this.foreground ? KEEPALIVE_MS : BACKGROUND_KEEPALIVE_MS,
+      });
+      if (!this.wanted) {
+        channel.close("bye");
+        return;
+      }
+      const old = this.channel;
+      this.attach(channel, laptop, "lan", welcome);
+      old?.close("moved to the direct link");
+      await this.remember(laptop.key, addr);
+      console.info("[ekatva link] moved to the direct link");
+    } catch (e) {
+      console.info(`[ekatva link] the direct link didn't come up: ${(e as Error).message}`);
+    } finally {
+      this.switching = false;
+    }
+  }
+
+  /** Where the laptop was heard lately, if it was. */
+  private nearOf(key: string): string | null {
+    const n = this.near.get(key);
+    return n && this.now() - n.at < NEAR_FOR_MS ? n.addr : null;
+  }
+
+  /** Puts a working direct address first in the laptop's record. */
+  private async remember(key: string, addr: string): Promise<void> {
+    const l = this.d.laptops.get(key);
+    if (l && l.lan[0] !== addr)
+      await this.d.laptops.update(key, {
+        lan: [addr, ...l.lan.filter((a) => a !== addr)].slice(0, 4),
+      });
+  }
+
+  /**
+   * The app came forward or the network changed: online, make sure the
+   * connection still answers; offline, try again now, quickly from here on.
+   */
   wake(): void {
-    if (this.wanted && this.state.status === "offline") void this.connectNow();
+    if (!this.wanted) return;
+    this.attempts = 0;
+    // Back in front, or on a new network: the laptop may be anywhere now.
+    this.lastAsk = 0;
+    this.tuneBeacons();
+    if (this.state.status === "online") void this.check();
+    else if (this.state.status === "offline") void this.connectNow();
+  }
+
+  /** In front: quick retries and a heartbeat. In the background: gentler. */
+  setForeground(fg: boolean): void {
+    this.foreground = fg;
+    this.channel?.setKeepalive(fg ? KEEPALIVE_MS : BACKGROUND_KEEPALIVE_MS);
+    if (this.beaconTimer) clearTimeout(this.beaconTimer);
+    this.beaconTimer = null;
+    if (fg) {
+      this.backgroundSince = null;
+      this.startHeartbeat();
+      this.tuneBeacons();
+      this.wake();
+    } else {
+      this.backgroundSince = this.now();
+      this.stopHeartbeat();
+      // Look again once it has been in the background a while.
+      this.beaconTimer = setTimeout(() => this.tuneBeacons(), BEACONS_BACKGROUND_MS);
+    }
+  }
+
+  /** Asks the laptop something cheap; no answer in time and the connection is dead. */
+  private async check(): Promise<void> {
+    const channel = this.channel;
+    const client = this.client;
+    if (!channel?.isOpen || !client) return;
+    let timer: ReturnType<typeof setTimeout> | null = null;
+    const dead = await Promise.race([
+      // Any answer counts, even a refusal: the laptop is there.
+      client.status.query().then(
+        () => false,
+        (e: unknown) =>
+          /timed out|closed|not connected|socket/i.test(String((e as Error)?.message)),
+      ),
+      new Promise<boolean>((r) => {
+        timer = setTimeout(() => r(true), HEARTBEAT_TIMEOUT_MS);
+      }),
+    ]);
+    if (timer) clearTimeout(timer);
+    if (dead && this.channel === channel && channel.isOpen) {
+      console.info("[ekatva link] the laptop stopped answering; reconnecting");
+      channel.close("the laptop stopped answering");
+    }
   }
 
   stop(): void {
+    if (LinkManager.active === this) LinkManager.active = null;
     this.wanted = false;
+    this.stopHeartbeat();
+    if (this.beaconTimer) clearTimeout(this.beaconTimer);
+    this.beaconTimer = null;
+    this.stopBeacons?.();
+    this.stopBeacons = null;
     if (this.retryTimer) clearTimeout(this.retryTimer);
     this.retryTimer = null;
     this.channel?.close("bye");
@@ -176,10 +414,12 @@ export class LinkManager {
       return;
     }
     this.set({ status: "connecting", laptop: laptop.key });
-    let result = await this.tryAll(laptop, laptop.lan, laptop.url);
+    const near = this.nearOf(laptop.key);
+    const lan = near ? [near, ...laptop.lan.filter((a) => a !== near)] : laptop.lan;
+    let result = await this.tryAll(laptop, lan, laptop.url);
     if (result === "ok" || result === "stop") return;
-    // Not where it was: ask the pair's mailbox where it is now.
-    const found = await this.ask(laptop);
+    // Not where it was: ask the pair's mailbox where it is now (not too often).
+    const found = (await this.mayAsk(laptop.key)) ? await this.ask(laptop) : null;
     if (found) {
       await this.d.laptops.update(laptop.key, { lan: found.lan, url: found.url });
       result = await this.tryAll(laptop, found.lan, found.url);
@@ -198,9 +438,13 @@ export class LinkManager {
           me: this.d.secrets.identity,
           expect: fromB64u(laptop.key),
           hello: { v: 1, name: this.d.hello.name, info: this.d.hello.info },
+          decisionTimeoutMs: DECISION_MS,
+          keepaliveMs: this.foreground ? KEEPALIVE_MS : BACKGROUND_KEEPALIVE_MS,
         });
         this.attempts = 0;
         this.attach(channel, laptop, via, welcome);
+        if (via === "lan")
+          await this.remember(laptop.key, u.replace(/^ws:\/\//, "").replace(/\/link$/, ""));
         return "ok";
       } catch (e) {
         if (e instanceof LinkError && e.code === CLOSE.denied) {
@@ -221,6 +465,20 @@ export class LinkManager {
     return error;
   }
 
+  /**
+   * Whether to ask the rendezvous now: not when the laptop was heard on this
+   * network lately (the direct try covers it), not without a network, and at
+   * most every 2 minutes in front, 20 in the background.
+   */
+  private async mayAsk(key: string): Promise<boolean> {
+    if (!this.d.ntfy || this.nearOf(key)) return false;
+    const gap = this.foreground ? RENDEZVOUS_FG_MS : RENDEZVOUS_BG_MS;
+    if (this.lastAsk && this.now() - this.lastAsk < gap) return false;
+    if (this.d.online && !(await this.d.online().catch(() => true))) return false;
+    this.lastAsk = this.now();
+    return true;
+  }
+
   /** Posts "where are you?" to the pair's mailbox and waits for the laptop's answer. */
   private async ask(laptop: LaptopRecord): Promise<{ url: string | null; lan: string[] } | null> {
     if (!this.d.ntfy) return null;
@@ -231,7 +489,10 @@ export class LinkManager {
       await this.d.ntfy.publish(mb.topic, mb.seal({ t: "where", at: this.now(), n }));
       const until = this.now() + (this.d.rendezvousWaitMs ?? 45_000);
       while (this.now() < until && this.wanted) {
-        await new Promise((r) => setTimeout(r, 1500));
+        await new Promise((r) => setTimeout(r, this.foreground ? 1500 : 5000));
+        // Heard on this network meanwhile: no need for the mailbox.
+        const near = this.nearOf(laptop.key);
+        if (near) return { url: laptop.url, lan: [near] };
         for (const m of await this.d.ntfy.poll(mb.topic, "5m")) {
           const msg = mb.open(m.message, this.now());
           if (msg?.t === "here" && msg.n === n) return { url: msg.url, lan: msg.lan };
@@ -250,7 +511,14 @@ export class LinkManager {
       this.set({ status: "offline", laptop, error, retryAt: null });
       return;
     }
-    const delay = Math.min(MAX_BACKOFF_MS, 1000 * 2 ** this.attempts++);
+    if (this.retryTimer) clearTimeout(this.retryTimer);
+    // Replaced by another connection from this phone: wait it out. Otherwise
+    // quick while you're looking at the app, gentler in the background, with
+    // a little jitter so a phone and a restarted laptop don't keep colliding.
+    const replaced = !!error && /replaced by a new connection/.test(error);
+    const cap = this.foreground ? FOREGROUND_MAX_MS : BACKGROUND_MAX_MS;
+    const base = replaced ? REPLACED_WAIT_MS : Math.min(cap, 600 * 2 ** this.attempts++);
+    const delay = Math.round(base * (0.85 + Math.random() * 0.3));
     this.set({ status: "offline", laptop, error, retryAt: this.now() + delay });
     this.retryTimer = setTimeout(() => void this.connectNow(), delay);
   }
@@ -281,40 +549,27 @@ export class LinkManager {
     });
     const client = createTRPCClient<LaptopRouter>({ links: [wsLink({ client: wsClient })] });
     this.client = client;
-    let follow: { unsubscribe(): void } | null = null;
     let stopped = false;
     const cleanup = () => {
       if (stopped) return;
       stopped = true;
-      follow?.unsubscribe();
       stopServing();
       void wsClient.close();
     };
     this.cleanup = cleanup;
+    // While in front, the laptop must keep answering (a half-open socket can
+    // look connected for minutes otherwise).
+    this.stopHeartbeat();
     void this.d.laptops.update(laptop.key, { lastSeen: this.now(), name: channel.peer.name });
+    this.via = via;
     const grants = ((welcome as { grants?: string[] } | null)?.grants ?? []).slice();
     this.set({ status: "online", laptop: laptop.key, via, grants });
-    // Keep a verified copy of the laptop's log.
-    void this.d.mirror(laptop.key).then(async (mirror) => {
-      if (stopped) return;
-      follow = client.journal.follow.subscribe(
-        { after: await mirror.head() },
-        {
-          onData: (e) => {
-            void mirror.add([e as Entry]).then((p) => {
-              if (p)
-                this.d.onAlert?.(
-                  `${laptop.name}'s action log doesn't match the copy on this phone (#${p.seq}: ${p.why})`,
-                );
-            });
-          },
-          onError: () => undefined,
-        },
-      );
-    });
+    this.startHeartbeat();
     channel.onClose((reason) => {
       cleanup();
       if (this.channel === channel) {
+        if (this.heartbeat) clearInterval(this.heartbeat);
+        this.heartbeat = null;
         this.channel = null;
         this.client = null;
         this.scheduleRetry(laptop.key, reason === "bye" ? null : reason);
@@ -327,6 +582,8 @@ export class LinkManager {
     if (this.state.status !== "unpaired" && "laptop" in this.state && this.state.laptop === key)
       this.stop();
     await this.d.laptops.remove(key);
+    this.beaconKeys.delete(key);
+    this.near.delete(key);
     this.set(
       this.d.laptops.current()
         ? {

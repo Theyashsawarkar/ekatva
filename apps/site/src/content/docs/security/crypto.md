@@ -11,7 +11,7 @@ description: "Noise XX on audited pure-JS primitives, the same code on both devi
 | Hash | BLAKE2b-512 (HKDF and the transcript), BLAKE2b-256 for the log |
 | Library | [@noble](https://paulmillr.com/noble/) curves, ciphers and hashes: audited, pure JavaScript |
 
-The same code runs in Node (the daemon), Electron and React Native (Hermes):
+The same code runs in Node (the daemon) and React Native (Hermes):
 there's no native crypto to build or to differ between platforms.
 
 **Interoperability is tested**: the test suite runs our handshake against an

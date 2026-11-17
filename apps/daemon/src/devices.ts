@@ -68,11 +68,18 @@ export class Devices {
     return () => this.listeners.delete(cb);
   }
 
-  private async save(): Promise<void> {
-    await mkdir(dirname(this.file), { recursive: true, mode: 0o700 });
-    const tmp = `${this.file}.tmp`;
-    await writeFile(tmp, JSON.stringify(this.list, null, 2), { mode: 0o600 });
-    await rename(tmp, this.file);
-    for (const cb of this.listeners) cb();
+  /** Saves one at a time: two at once shared the .tmp file and the second rename failed. */
+  private saving: Promise<void> = Promise.resolve();
+
+  private save(): Promise<void> {
+    const next = this.saving.then(async () => {
+      await mkdir(dirname(this.file), { recursive: true, mode: 0o700 });
+      const tmp = `${this.file}.tmp`;
+      await writeFile(tmp, JSON.stringify(this.list, null, 2), { mode: 0o600 });
+      await rename(tmp, this.file);
+      for (const cb of this.listeners) cb();
+    });
+    this.saving = next.catch(() => undefined);
+    return next;
   }
 }

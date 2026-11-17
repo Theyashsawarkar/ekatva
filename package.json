@@ -11,7 +11,7 @@
   "type": "module",
   "scripts": {
     "build": "turbo run build",
-    "dev": "turbo run dev --filter=@ekatva/daemon --filter=@ekatva/desktop",
+    "dev": "turbo run dev --filter=@ekatva/daemon",
     "test": "turbo run test",
     "typecheck": "turbo run typecheck",
     "lint": "biome check .",
@@ -24,7 +24,6 @@
   },
   "pnpm": {
     "onlyBuiltDependencies": [
-      "electron",
       "esbuild",
       "sharp"
     ]

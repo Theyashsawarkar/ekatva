@@ -16,6 +16,7 @@ export default function Gate() {
     );
   }
   if (phase === "setup") return <Redirect href="/setup" />;
-  if (phase === "password" || phase === "locked") return <Redirect href="/unlock" />;
+  if (phase === "password") return <Redirect href="/unlock" />;
+  // Ready, or locked after a while away: the app, with the lock as a layer over it.
   return <Redirect href="/(tabs)" />;
 }

@@ -13,8 +13,9 @@ description: "Every command."
 | `ekatva log [DEVICE] [-n N]` | The action log: this laptop's, or a phone's mirrored copy. |
 | `ekatva undo N` | Undoes entry N of this laptop's log. |
 | `ekatva check` | Verifies every log's hash chain; exits 2 on a problem. |
-| `ekatva caffeine [off\|on\|high] [--for MIN]` | Shows or sets caffeine. |
-| `ekatva status [--json\|--waybar]` | The laptop, caffeine, agents waiting, phones connected. |
+| `ekatva jyoti [shanta\|akhanda\|nandadipa] [--for MIN]` | Shows or sets jyoti (keeping the laptop awake; Nandādīpa: with the lid closed). |
+| `ekatva call [hangup\|--waybar]` | The phone's call right now; hang it up; or a bar capsule (who, for how long), live. |
+| `ekatva status [--json\|--waybar]` | The laptop, jyoti, agents waiting, phones connected. |
 | `ekatva agents` | Agent sessions in tmux and what they're asking. |
 | `ekatva daemon` | Runs the service (systemd does this). |
 

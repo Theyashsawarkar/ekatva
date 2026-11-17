@@ -10,14 +10,14 @@ import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import WebSocket from "ws";
 import { PhoneFiles } from "../src/core/files";
 import { MemoryKV } from "../src/core/kv";
+import { LinkManager } from "../src/core/link";
 import { MemoryLines } from "../src/core/logStore";
 import type { DeviceApi } from "../src/core/services";
 import { type Platform, Session } from "../src/core/session";
-import { strength, Vault } from "../src/core/vault";
+import { KeyGone, NeedsPassword, type SecretBox, sealV1, Vault } from "../src/core/vault";
 import { MemFs } from "./memfs";
 
 const PASSWORD = "correct horse battery 9!";
-const FAST = 2 ** 10; // scrypt cost for tests
 
 function platform(): Platform & {
   rang: () => number;
@@ -28,6 +28,7 @@ function platform(): Platform & {
   const files = new Map<string, MemoryLines>();
   const memfs = new MemFs();
   let rang = 0;
+  let ringing = false;
   let awake = false;
   let clip = "";
   const device: DeviceApi = {
@@ -37,7 +38,12 @@ function platform(): Platform & {
     locked: async () => false,
     ring: async () => {
       rang++;
+      ringing = true;
     },
+    stopRinging: async () => {
+      ringing = false;
+    },
+    ringing: () => ringing,
     keepAwake: async (on) => {
       awake = on;
     },
@@ -49,6 +55,7 @@ function platform(): Platform & {
     lock: null,
     calls: null,
     sms: null,
+    notifications: null,
   };
   void memfs.mkdir("/storage/emulated/0/Download");
   return {
@@ -86,23 +93,79 @@ function platform(): Platform & {
 }
 
 describe("the vault", () => {
-  it("opens with the right password only, and survives a password change", async () => {
+  /** A box like the phone's: counts each time Android would ask for the fingerprint. */
+  const testBox = () => {
+    let text: string | null = null;
+    let gone = false;
+    const asked = { n: 0 };
+    const box: SecretBox = {
+      exists: async () => text !== null,
+      seal: async (t) => {
+        asked.n++;
+        text = t;
+      },
+      open: async () => {
+        asked.n++;
+        if (gone) throw Object.assign(new Error("the key is gone"), { code: "E_KEY_GONE" });
+        return text;
+      },
+      wipe: async () => {
+        text = null;
+      },
+    };
+    return { box, asked, drop: () => (gone = true) };
+  };
+
+  it("opens with one fingerprint, and none just to start the app", async () => {
+    const { box, asked } = testBox();
     const kv = new MemoryKV();
-    const made = await Vault.create(kv, PASSWORD, FAST);
-    expect((await Vault.open(kv, PASSWORD)).identity.publicKey).toEqual(made.identity.publicKey);
-    await expect(Vault.open(kv, "wrong password!!")).rejects.toThrow(/wrong password/);
-    await Vault.changePassword(kv, PASSWORD, "another long passphrase 7", FAST);
-    expect((await Vault.open(kv, "another long passphrase 7")).logKey).toEqual(made.logKey);
-    // The stored blob reveals nothing readable.
-    expect([...kv.map.values()].join()).not.toContain("identity");
+    const made = await Vault.create(box);
+    asked.n = 0;
+    expect(await Vault.exists(box, kv)).toBe(true);
+    expect(asked.n).toBe(0);
+    const opened = await Vault.open(box, kv);
+    expect(asked.n).toBe(1);
+    expect(opened.identity.publicKey).toEqual(made.identity.publicKey);
+    expect(opened.logKey).toEqual(made.logKey);
   });
 
-  it("refuses weak passwords", async () => {
-    expect(strength("short").score).toBe(0);
-    expect(strength("aaaaaaaaaaaa").score).toBe(1);
-    expect(strength("sunshine2024").score).toBeLessThan(3);
-    expect(strength("Tr4in-Gl4ss-Rivr").score).toBeGreaterThanOrEqual(3);
-    await expect(Vault.create(new MemoryKV(), "password12", FAST)).rejects.toThrow(/stronger/);
+  it("moves a vault from before (app password) into the box, once", async () => {
+    const { box } = testBox();
+    const kv = new MemoryKV();
+    const old = await Vault.create(testBox().box);
+    await sealV1(kv, PASSWORD, old);
+    expect(await Vault.exists(box, kv)).toBe(true);
+    await expect(Vault.open(box, kv)).rejects.toBeInstanceOf(NeedsPassword);
+    await expect(Vault.openWithPassword(box, kv, "wrong password!!")).rejects.toThrow(
+      /wrong password/,
+    );
+    const moved = await Vault.openWithPassword(box, kv, PASSWORD);
+    expect(moved.identity.publicKey).toEqual(old.identity.publicKey);
+    // The old vault is gone; from now on, the box alone.
+    expect(kv.map.has("ekatva.vault")).toBe(false);
+    expect((await Vault.open(box, kv)).logKey).toEqual(old.logKey);
+  });
+
+  it("finds a vault from before even without its mark (an older build)", async () => {
+    const kv = new MemoryKV();
+    await kv.set("ekatva.laptops", "[]");
+    expect(await Vault.exists(testBox().box, kv)).toBe(true);
+    expect(await Vault.exists(testBox().box, new MemoryKV())).toBe(false);
+  });
+
+  it("says plainly when Android dropped the key", async () => {
+    const { box, drop } = testBox();
+    await Vault.create(box);
+    drop();
+    await expect(Vault.open(box, new MemoryKV())).rejects.toBeInstanceOf(KeyGone);
+  });
+
+  it("is gone after starting over", async () => {
+    const { box } = testBox();
+    const kv = new MemoryKV();
+    await Vault.create(box);
+    await Vault.wipe(box, kv);
+    expect(await Vault.exists(box, kv)).toBe(false);
   });
 });
 
@@ -151,11 +214,14 @@ describe("phone and laptop, end to end", () => {
       socketPath: join(root, "ekatva.sock"),
       port: 0,
       host: "127.0.0.1",
-      mdns: false,
+      beacon: false,
+      checkFirewall: false,
+      desktopNotifications: false,
       rendezvous: false,
-      caffeineHost: {
+      jyotiHost: {
         run: async () => ({ code: 0, out: "" }),
-        hold: () => ({ stop() {}, onExit() {} }),
+        hold: () => ({ stop: async () => undefined, onExit() {} }),
+        lock: async () => undefined,
         lidClosed: () => null,
         battery: () => null,
         now: Date.now,
@@ -169,7 +235,7 @@ describe("phone and laptop, end to end", () => {
     });
     local = createTRPCClient<LocalRouter>({ links: [wsLink({ client: ws })] });
     p = platform();
-    phone = await Session.create(p, PASSWORD, FAST);
+    phone = await Session.create(p);
   });
 
   afterAll(async () => {
@@ -215,13 +281,12 @@ describe("phone and laptop, end to end", () => {
     });
     const log = await local.admin.log.list.query({ host: "self" });
     expect(log.at(-1)).toMatchObject({ action: "files.write", actor: { name: "Pixel 8" } });
-    // The phone keeps its own verified copy of the laptop's log.
-    const mirror = await phone.mirrorOf(daemon.id);
-    for (let i = 0; i < 50 && (await mirror.head()) < (log.at(-1)?.seq ?? 0); i++)
-      await new Promise((r) => setTimeout(r, 20));
-    expect(await mirror.head()).toBe(log.at(-1)?.seq);
-    // Encrypted at rest: no readable path in the stored lines.
-    expect((await p.lines(`log-${daemon.id}`).read()).join()).not.toContain("from-phone");
+    // The phone reads the laptop's log from the laptop, a page at a time, and keeps no copy.
+    const head = await client.journal.head.query();
+    expect(head.seq).toBe(log.at(-1)?.seq);
+    const page = await client.journal.since.query({ after: head.seq - 1, limit: 5 });
+    expect(page.at(-1)).toMatchObject({ action: "files.write" });
+    expect(await p.lines(`log-${daemon.id}`).read()).toEqual([]);
   });
 
   it("answers a root request from the laptop's window, the password never logged", async () => {
@@ -289,6 +354,30 @@ describe("phone and laptop, end to end", () => {
     await phone.laptops.update(daemon.id, { grants: ["phone.status"] });
     await expect(local.admin.phone.mutate.mutate({ path: "ring" })).rejects.toThrow(/may not use/);
     expect(p.rang()).toBe(1);
+  });
+
+  it("one link per app: starting a second stops the first", async () => {
+    const twin = await Session.unlock(p);
+    twin.link.start();
+    for (let i = 0; i < 100 && twin.link.state.status !== "online"; i++)
+      await new Promise((r) => setTimeout(r, 20));
+    expect(twin.link.state.status).toBe("online");
+    // The first one stopped for good: it doesn't knock again.
+    expect(phone.link.state).toMatchObject({ status: "offline", retryAt: null });
+    expect(LinkManager.active).toBe(twin.link);
+
+    // Two copies anyway (two processes): the one replaced waits half a minute.
+    LinkManager.active = null;
+    phone.link.start();
+    for (let i = 0; i < 100 && twin.link.state.status !== "offline"; i++)
+      await new Promise((r) => setTimeout(r, 20));
+    const s = twin.link.state as { status: string; error: string | null; retryAt: number | null };
+    expect(s.error).toMatch(/replaced by a new connection/);
+    expect((s.retryAt ?? 0) - Date.now()).toBeGreaterThan(20_000);
+    twin.link.stop();
+    for (let i = 0; i < 100 && phone.link.state.status !== "online"; i++)
+      await new Promise((r) => setTimeout(r, 20));
+    expect(phone.link.state.status).toBe("online");
   });
 
   it("reconnects by itself, and stops when the laptop unpairs it", async () => {

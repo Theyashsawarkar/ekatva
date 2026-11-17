@@ -8,8 +8,9 @@ import { join } from "node:path";
 import { createInterface } from "node:readline/promises";
 import {
   CAPABILITIES,
-  type CaffeineLevel,
+  type CallNow,
   type Entry,
+  type JyotiLevel,
   type LocalRouter,
   PRESETS,
   type Preset,
@@ -20,6 +21,7 @@ import { loadConfig } from "./config.js";
 import { Daemon, VERSION } from "./daemon.js";
 import { loadIdentity } from "./identity.js";
 import { dirs, socketPath } from "./paths.js";
+import { callFor } from "./services/calls.js";
 import { run } from "./services/system.js";
 
 /** How long `pair` waits past the code's expiry for a phone that got in at the last moment. */
@@ -37,10 +39,17 @@ const HELP = `ekatva ${VERSION}: your phone and your laptop as one device
   ekatva log [DEVICE] [-n N]      the action log (this laptop's, or a phone's copy)
   ekatva undo N                   undo entry #N of this laptop's log
   ekatva check                    verify both logs' hash chains
-  ekatva caffeine [off|on|high] [--for MIN]
+  ekatva appearance [light|dark|toggle]
+                                  the laptop's light or dark mode: show it, or switch it
+  ekatva phone appearance [light|dark]
+                                  the same for the connected phone
+  ekatva jyoti [shanta|akhanda|nandadipa] [--for MIN]
+                                  keep the laptop awake: akhanda (no lock or sleep), nandadipa
+                                  (also with the lid closed); shanta: at rest, as usual
+  ekatva call [hangup|--waybar]   the phone's call now (or hang it up; --waybar: a bar capsule)
   ekatva status [--json|--waybar]
   ekatva agents                   AI agent sessions in tmux
-  ekatva window [TAB]             open the desktop window (phones, pair, log, caffeine, phone)
+  ekatva window [PLACE]           open the window: overview, messages, calls, files, log, devices, pair
   ekatva daemon                   run the service (systemd does this)
   ekatva mcp                      an MCP server on stdio, for AI agents (EKATVA_AGENT=name)
 
@@ -187,38 +196,99 @@ async function decide(pending: { name: string; sas: string[] }, window: boolean)
   }
 }
 
+/** The old window's tabs, as the popup's places. */
+/** Jyoti's levels as the CLI says them (ASCII: scripts read them). */
+const LEVEL_NAME: Record<JyotiLevel, string> = { off: "shanta", on: "akhanda", high: "nandadipa" };
+const LEVEL_WORDS: Record<string, JyotiLevel> = {
+  shanta: "off",
+  off: "off",
+  akhanda: "on",
+  on: "on",
+  nandadipa: "high",
+  nanda: "high",
+  strong: "high",
+  high: "high",
+};
+
+const PLACES: Record<string, string> = {
+  phones: "devices",
+  devices: "devices",
+  pair: "pair",
+  log: "log",
+  jyoti: "over",
+  phone: "over",
+  overview: "over",
+  messages: "msgs",
+  calls: "calls",
+  files: "files",
+};
+
 /**
- * Opens the Electron window, detached. GTK 4 preloaded into the environment
- * (gtk4-layer-shell, for Vyom's panels) would crash Electron's GTK 3, so
- * it's taken out for this child.
+ * Opens ekatva's window: the Vyom popup (instant, Vyom is resident).
  */
 async function openWindow(tab: string | undefined): Promise<void> {
-  const { spawn } = await import("node:child_process");
-  const { dirname, join } = await import("node:path");
-  const { fileURLToPath } = await import("node:url");
-  const desktop =
-    process.env.EKATVA_DESKTOP ?? join(dirname(fileURLToPath(import.meta.url)), "../../desktop");
-  const electron = join(desktop, "node_modules/electron/dist/electron");
-  if (!existsSync(electron) || !existsSync(join(desktop, "out/main/index.js")))
-    throw new Error(`the desktop window isn't built (${desktop}); run pnpm build`);
-  const env = { ...process.env };
-  const preload = (env.LD_PRELOAD ?? "")
-    .split(/[: ]/)
-    .filter((p) => p && !p.includes("gtk4-layer-shell"));
-  if (preload.length) env.LD_PRELOAD = preload.join(":");
-  else delete env.LD_PRELOAD;
-  const args = [
-    join(desktop, "out/main/index.js"),
-    "--ozone-platform-hint=auto",
-    ...(tab ? [`--tab=${tab}`] : []),
-  ];
-  const child = spawn(electron, args, { env, detached: true, stdio: "ignore" });
-  child.on("error", () => undefined);
-  child.unref();
+  const { spawnSync } = await import("node:child_process");
+  const { homedir } = await import("node:os");
+  const args = ["ekatva", ...(tab ? [PLACES[tab] ?? tab] : [])];
+  // ~/.local/bin first: the service's and sway's PATH often leave it out.
+  for (const vyom of [`${homedir()}/.local/bin/vyom`, "vyom"]) {
+    const r = spawnSync(vyom, args, { stdio: "ignore" });
+    if (!r.error && r.status === 0) return;
+  }
+  throw new Error(
+    "the window is a Vyom popup: install Vyom and the ekatva plugin " +
+      "(https://github.com/Theyashsawarkar/ekatva-vyom)",
+  );
+}
+
+/**
+ * `ekatva call --waybar`: the call in progress as a waybar capsule, one JSON
+ * line per change and every few seconds while it lasts (for its time), an
+ * empty one when there's none (waybar hides it). Runs for as long as waybar
+ * does: no timeout, and it reconnects when the service restarts.
+ */
+function watchCallForWaybar(): void {
+  const out = (o: Record<string, unknown>) => process.stdout.write(`${JSON.stringify(o)}\n`);
+  let now: CallNow | null = null;
+  const draw = () => {
+    if (!now) return out({ text: "", class: "none", tooltip: "" });
+    const who = now.contact ?? (now.number || "Unknown");
+    const ringing = now.state === "ringing";
+    const time = callFor(Date.now() - now.since);
+    out({
+      text: ringing ? `\u{f03f2}  ${who} · calling` : `\u{f03f2}  ${who} · ${time}`,
+      class: ringing ? "ringing" : "active",
+      tooltip: `${ringing ? "Incoming call from" : "On a call with"} ${who}${now.contact && now.number ? ` (${now.number})` : ""} on ${now.name}${ringing ? "" : ` · ${time}`}\nClick: open ekatva · right click: hang up`,
+    });
+  };
+  const ws = createWSClient({
+    url: `ws+unix://${socketPath()}:/`,
+    WebSocket: WebSocket as never,
+    retryDelayMs: () => 2000,
+    onError: () => undefined,
+  });
+  const api = createTRPCClient<LocalRouter>({ links: [wsLink({ client: ws })] });
+  api.admin.calls.watch.subscribe(undefined, {
+    onData: (c) => {
+      now = c;
+      draw();
+    },
+    onError: () => {
+      now = null;
+      draw();
+    },
+  });
+  draw();
+  setInterval(() => now && draw(), 5000);
 }
 
 async function main(argv: string[]): Promise<void> {
   const [cmd, ...rest] = argv;
+  // Runs for as long as waybar does: main never returns (it would exit).
+  if (cmd === "call" && rest.includes("--waybar")) {
+    watchCallForWaybar();
+    return new Promise<void>(() => undefined);
+  }
   if (!cmd || cmd === "help" || cmd === "--help" || cmd === "-h") {
     process.stdout.write(`${HELP}\n`);
     return;
@@ -355,15 +425,73 @@ async function main(argv: string[]): Promise<void> {
         if (bad) process.exitCode = 2;
         break;
       }
-      case "caffeine": {
-        const level = rest[0] as CaffeineLevel | undefined;
-        if (level && !["off", "on", "high"].includes(level))
-          fail("usage: ekatva caffeine [off|on|high] [--for MIN]");
+      case "appearance": {
+        const want = rest[0];
+        if (want && !["light", "dark", "toggle"].includes(want))
+          fail("usage: ekatva appearance [light|dark|toggle]");
+        let a = await api.appearance.get.query();
+        if (want) {
+          const mode = want === "toggle" ? (a.mode === "dark" ? "light" : "dark") : want;
+          a = await api.appearance.set.mutate({ mode: mode as "light" | "dark" });
+        }
+        process.stdout.write(`${a.mode}${a.settable ? "" : ` (can't switch: ${a.why})`}
+`);
+        break;
+      }
+      case "phone": {
+        const want = rest[1];
+        if (rest[0] !== "appearance" || (want && !["light", "dark"].includes(want)))
+          fail("usage: ekatva phone appearance [light|dark]");
+        const a = (await (want
+          ? api.admin.phone.mutate.mutate({
+              key: null,
+              path: "appearance.set",
+              input: { mode: want },
+            })
+          : api.admin.phone.query.query({ key: null, path: "appearance.get" }))) as {
+          mode: string;
+          settable: boolean;
+          why: string | null;
+        };
+        process.stdout.write(`phone: ${a.mode}${a.settable ? "" : ` (can't switch: ${a.why})`}
+`);
+        break;
+      }
+      case "jyoti": {
+        // Akhaṇḍa is "on" on the wire, Nandādīpa "high"; the older names still work.
+        const asked = rest[0] ? LEVEL_WORDS[rest[0].toLowerCase()] : undefined;
+        if (rest[0] && !asked) fail("usage: ekatva jyoti [shanta|akhanda|nandadipa] [--for MIN]");
+        const level = asked as JyotiLevel | undefined;
         const minutes = flag("--for");
         const c = level
-          ? await api.caffeine.set.mutate({ level, minutes: minutes ? Number(minutes) : null })
-          : await api.caffeine.get.query();
-        process.stdout.write(`caffeine: ${c.level}${c.until ? ` until ${when(c.until)}` : ""}\n`);
+          ? await api.jyoti.set.mutate({ level, minutes: minutes ? Number(minutes) : null })
+          : await api.jyoti.get.query();
+        process.stdout.write(
+          `jyoti: ${LEVEL_NAME[c.level]}${c.until ? ` until ${when(c.until)}` : ""}\n`,
+        );
+        break;
+      }
+      case "call": {
+        if (rest[0] === "hangup") {
+          await api.admin.phone.mutate.mutate({ path: "calls.hangUp" });
+          process.stdout.write("hung up\n");
+          break;
+        }
+        // The call right now: the first thing the watch says.
+        const now = await new Promise<CallNow | null>((resolve) => {
+          const sub = api.admin.calls.watch.subscribe(undefined, {
+            onData: (c) => {
+              sub.unsubscribe();
+              resolve(c);
+            },
+            onError: () => resolve(null),
+          });
+        });
+        process.stdout.write(
+          now
+            ? `${now.state === "ringing" ? "ringing" : "on a call"}: ${now.contact ?? now.number ?? "unknown"} on ${now.name} · ${callFor(Date.now() - now.since)}\n`
+            : "no call\n",
+        );
         break;
       }
       case "status": {
@@ -375,13 +503,13 @@ async function main(argv: string[]): Promise<void> {
         if (rest.includes("--waybar")) {
           const text = online.length ? online.map((d) => d.name).join(", ") : "";
           process.stdout.write(
-            `${JSON.stringify({ text, tooltip: `${online.length} phone(s) connected · caffeine ${s.caffeine} · ${s.waiting} agent(s) waiting`, class: [online.length ? "connected" : "idle", `caffeine-${s.caffeine}`] })}\n`,
+            `${JSON.stringify({ text, tooltip: `${online.length} phone(s) connected · jyoti ${LEVEL_NAME[s.jyoti]} · ${s.waiting} agent(s) waiting`, class: [online.length ? "connected" : "idle", `jyoti-${s.jyoti}`] })}\n`,
           );
         } else if (rest.includes("--json"))
           process.stdout.write(`${JSON.stringify({ ...s, devices })}\n`);
         else
           process.stdout.write(
-            `${s.name}: caffeine ${s.caffeine}, ${s.waiting} agent(s) waiting, ${online.length ? `connected: ${online.map((d) => d.name).join(", ")}` : "no phone connected"}\n`,
+            `${s.name}: jyoti ${LEVEL_NAME[s.jyoti]}, ${s.waiting} agent(s) waiting, ${online.length ? `connected: ${online.map((d) => `${d.name} (${d.via === "lan" ? "same network" : "from away"}, encrypted)`).join(", ")}` : "no phone connected"}\n${s.firewall ? `warning: ${s.firewall.problem}.\n  fix: ${s.firewall.fix}\n` : ""}`,
           );
         break;
       }

@@ -40,7 +40,9 @@ class LinkService : Service() {
     val notification = Notification.Builder(this, CHANNEL)
       .setContentTitle("ekatva")
       .setContentText(text)
-      .setSmallIcon(applicationInfo.icon)
+      .setSmallIcon(R.drawable.ic_stat_ekatva)
+      .setColor(LaptopNotifications.BRASS)
+      .setGroup("ekatva-link")
       .setOngoing(true)
       .setContentIntent(open)
       .build()
@@ -49,6 +51,8 @@ class LinkService : Service() {
     } else {
       startForeground(ID, notification)
     }
-    return START_STICKY
+    // Not sticky: restarted by Android after the app was killed, it would show
+    // "Linked" with nothing running behind it. The app starts it again itself.
+    return START_NOT_STICKY
   }
 }

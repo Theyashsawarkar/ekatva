@@ -75,7 +75,7 @@ export function nonce(): string {
   return toB64u(n);
 }
 
-/** A tiny ntfy client over fetch (Node, Electron and React Native have it). */
+/** A tiny ntfy client over fetch (Node and React Native have it). */
 export class Ntfy {
   constructor(
     readonly server = "https://ntfy.sh",

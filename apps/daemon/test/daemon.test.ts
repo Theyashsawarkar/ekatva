@@ -25,7 +25,7 @@ import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import WebSocket from "ws";
 import { loadConfig } from "../src/config.js";
 import { Daemon } from "../src/daemon.js";
-import type { Host } from "../src/services/caffeine.js";
+import type { Host } from "../src/services/jyoti.js";
 
 let root: string;
 let daemon: Daemon;
@@ -34,7 +34,8 @@ const closers: (() => void)[] = [];
 
 const fakeHost: Host = {
   run: async () => ({ code: 0, out: "" }),
-  hold: () => ({ stop: () => undefined, onExit: () => undefined }),
+  hold: () => ({ stop: async () => undefined, onExit: () => undefined }),
+  lock: async () => undefined,
   lidClosed: () => null,
   battery: () => null,
   now: () => Date.now(),
@@ -57,9 +58,11 @@ beforeAll(async () => {
     socketPath: join(root, "ekatva.sock"),
     port: 0,
     host: "127.0.0.1",
-    mdns: false,
+    beacon: false,
+    checkFirewall: false,
+    desktopNotifications: false,
     rendezvous: false,
-    caffeineHost: fakeHost,
+    jyotiHost: fakeHost,
     // Nothing real: no players, no volume, no backlight.
     mediaHost: { run: async () => ({ code: 127, out: "" }), art: async () => null, now: Date.now },
     log: () => undefined,
@@ -172,7 +175,7 @@ describe("the daemon, end to end", () => {
 
   it("serves the phone what it was granted, and logs it", async () => {
     expect((await p.client.status.query()).name).toBe("ace");
-    await expect(p.client.caffeine.set.mutate({ level: "high" })).rejects.toMatchObject({
+    await expect(p.client.jyoti.set.mutate({ level: "high" })).rejects.toMatchObject({
       data: { code: "FORBIDDEN" },
     });
     await p.client.files.remove.mutate({ path: "~/notes.md" });
@@ -180,7 +183,7 @@ describe("the daemon, end to end", () => {
     const log = await local.admin.log.list.query({ host: "self" });
     const del = log.find((e) => e.action === "files.remove");
     expect(del).toMatchObject({ ok: true, actor: { name: "Pixel 8" } });
-    expect(log.find((e) => e.action === "caffeine.set")).toMatchObject({
+    expect(log.find((e) => e.action === "jyoti.set")).toMatchObject({
       ok: false,
       error: "not granted",
     });

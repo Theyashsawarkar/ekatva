@@ -9,7 +9,7 @@ Every key is optional.
 name = "ace"            # how phones see this laptop (default: the hostname)
 port = 47100
 host = "0.0.0.0"        # where to listen
-advertise = true        # announce on the local network (mDNS)
+advertise = true        # the encrypted beacon for phones on the same network
 
 [files]
 roots = ["~"]           # what phones may reach
@@ -31,7 +31,7 @@ kind = "cloudflared"    # or "ngrok", "tailscale", "none"
 | | |
 |---|---|
 | `~/.config/ekatva/config.toml` | this file |
-| `~/.local/state/ekatva/` | paired devices, the action logs, caffeine state (0700) |
+| `~/.local/state/ekatva/` | paired devices, the action logs, jyoti state (0700) |
 | `~/.local/share/ekatva/undo/` | the undo store (0700) |
 | `$XDG_RUNTIME_DIR/ekatva.sock` | the local socket (0600) |
 | desktop keyring, "ekatva: this laptop's identity" | the laptop's secret key |

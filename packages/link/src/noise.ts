@@ -1,7 +1,7 @@
 /**
  * Noise_XX_25519_ChaChaPoly_BLAKE2b (https://noiseprotocol.org/noise.html),
- * on the audited pure-JS @noble libraries so it runs the same in Node,
- * Electron and React Native (Hermes).
+ * on the audited pure-JS @noble libraries so it runs the same in Node and
+ * React Native (Hermes).
  *
  *   XX:  -> e
  *        <- e, ee, s, es

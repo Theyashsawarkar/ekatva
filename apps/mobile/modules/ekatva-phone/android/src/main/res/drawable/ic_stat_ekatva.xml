@@ -1,0 +1,35 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- ekatva's mark for the status bar and notification shade: the logo's
+     laptop with the phone in front of it, as Android draws small icons
+     (white on transparent; Android tints it). -->
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="24dp"
+    android:height="24dp"
+    android:viewportWidth="64"
+    android:viewportHeight="64">
+  <group android:translateX="1" android:translateY="-4">
+    <!-- the laptop's screen, cut where the phone stands in front of it -->
+    <path
+        android:pathData="M34,38 H10 A4,4 0 0 1 6,34 V18 A4,4 0 0 1 10,14 H36 A4,4 0 0 1 40,18"
+        android:strokeColor="#FFFFFFFF"
+        android:strokeWidth="4.5"
+        android:strokeLineCap="round"
+        android:strokeLineJoin="round"
+        android:fillColor="#00000000" />
+    <!-- its base -->
+    <path
+        android:pathData="M2,44 H31"
+        android:strokeColor="#FFFFFFFF"
+        android:strokeWidth="4.5"
+        android:strokeLineCap="round" />
+    <!-- the phone -->
+    <path
+        android:pathData="M43,22 H53 A5,5 0 0 1 58,27 V51 A5,5 0 0 1 53,56 H43 A5,5 0 0 1 38,51 V27 A5,5 0 0 1 43,22 Z"
+        android:strokeColor="#FFFFFFFF"
+        android:strokeWidth="4.5"
+        android:fillColor="#00000000" />
+    <path
+        android:pathData="M48,46.6 A2.4,2.4 0 1 1 48,51.4 A2.4,2.4 0 1 1 48,46.6 Z"
+        android:fillColor="#FFFFFFFF" />
+  </group>
+</vector>

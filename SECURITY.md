@@ -22,3 +22,14 @@ not in public issues. You'll get an answer within a week.
   will run.
 - Agent answers are sent only after the daemon checks the pane still shows
   the question that was answered.
+
+## Why the phone app allows cleartext traffic
+
+`apps/mobile/app.json` sets `usesCleartextTraffic: true`. Android needs it for
+`ws://` to the laptop on the same network: the laptop's LAN address changes
+from network to network, and a network security config can't allow "any
+private address". The traffic itself is not in the clear: every byte over that
+WebSocket is a Noise XX channel (ChaCha20-Poly1305), authenticated by both
+keys pinned at pairing. Nothing else the app loads may use plain HTTP: the
+rendezvous is HTTPS, and covers come from the laptop as `data:` images, never
+as a URL the phone would fetch itself (the phone drops any other kind).

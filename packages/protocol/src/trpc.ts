@@ -8,6 +8,27 @@ import { initTRPC, TRPCError } from "@trpc/server";
 import type { Capability } from "./capabilities.js";
 import type { Actor, Journal, Undo } from "./journal.js";
 
+interface Issue {
+  code?: string;
+  path?: PropertyKey[];
+  message: string;
+  minimum?: number | bigint;
+  maximum?: number | bigint;
+}
+
+/** zod's issues as one sentence for people: "percent must be at least 1". */
+export function readableIssues(issues: Issue[]): string {
+  const i = issues[0];
+  if (!i) return "That isn't a valid request";
+  const field = (i.path ?? []).filter((p) => typeof p === "string").join(".");
+  const what = field || "The value";
+  if (i.code === "too_small" && i.minimum !== undefined)
+    return `${what} must be at least ${i.minimum}`;
+  if (i.code === "too_big" && i.maximum !== undefined)
+    return `${what} must be at most ${i.maximum}`;
+  return field ? `${field}: ${i.message}` : i.message;
+}
+
 export interface Meta {
   cap: Capability;
   /** Record this query or subscription too (mutations always are). */
@@ -34,12 +55,20 @@ export interface BaseContext {
 }
 
 export function createApi<Ctx extends BaseContext>() {
-  const t = initTRPC.context<Ctx>().meta<Meta>().create({
-    isServer: true,
-    allowOutsideOfServer: true,
-    // Never send stack traces to the other device.
-    isDev: false,
-  });
+  const t = initTRPC
+    .context<Ctx>()
+    .meta<Meta>()
+    .create({
+      isServer: true,
+      allowOutsideOfServer: true,
+      // Never send stack traces to the other device.
+      isDev: false,
+      // A bad input says what's wrong in one sentence, not zod's JSON.
+      errorFormatter: ({ shape, error }) => {
+        const issues = (error.cause as { issues?: Issue[] } | undefined)?.issues;
+        return issues?.length ? { ...shape, message: readableIssues(issues) } : shape;
+      },
+    });
 
   const guarded = t.procedure.use(async ({ ctx, meta, path, type, getRawInput, next }) => {
     if (!meta?.cap) {
