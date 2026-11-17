@@ -2,7 +2,7 @@
 
 Newest first. Releases are tags (`vX.Y.Z`); every package's `version` moves together.
 
-## Unreleased
+## v0.1.1 -- 2026-11-18
 
 - The website and README show the phone app too: Home, Agents, an agent's conversation and Files, shot with `apps/mobile/scripts/demo/shoot.sh` (the real app in a headless emulator, paired with a made-up laptop in a throwaway folder: made-up files, agents, song; nothing real is read or touched).
 - **The phone app is built from source, signed with your own key**: `apps/mobile/scripts/build-apk.sh` builds a standalone APK and signs it with a key it makes on the first run in `~/.config/ekatva-release` (never in the repo; back it up). It updates a debug-signed install in place (a key rotation proof), so nobody pairs again. No APK is hosted: the app only works with a laptop running ekatva, and whoever runs that builds the app too.

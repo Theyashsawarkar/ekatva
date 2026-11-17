@@ -1,6 +1,6 @@
 {
   "name": "@ekatva/protocol",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "private": true,
   "description": "The contract: capabilities, tRPC routers' types and zod schemas, and tRPC over an ekatva channel.",
   "type": "module",

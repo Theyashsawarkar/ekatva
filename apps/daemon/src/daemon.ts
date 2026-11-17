@@ -74,7 +74,7 @@ import { SystemService } from "./services/system.js";
 import { TerminalService } from "./services/terminal.js";
 import { Tunnel } from "./services/tunnel.js";
 
-const VERSION = "0.1.0";
+const VERSION = "0.1.1";
 /** A peer that fails this many handshakes in the window is shut out for it. */
 const MAX_FAILURES = 8;
 const FAILURE_WINDOW_MS = 10 * 60_000;

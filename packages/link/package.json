@@ -1,6 +1,6 @@
 {
   "name": "@ekatva/link",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "private": true,
   "description": "Noise XX over any message transport, pairing, the QR payload and channel multiplexing.",
   "type": "module",

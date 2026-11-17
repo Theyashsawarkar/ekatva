@@ -1,6 +1,6 @@
 {
   "name": "@ekatva/daemon",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "private": true,
   "description": "The laptop side: always-on service, the tRPC server, the `ekatva` CLI.",
   "type": "module",
