@@ -7,6 +7,7 @@ import android.content.Intent
 import android.graphics.Bitmap
 import android.graphics.Canvas
 import android.graphics.drawable.Drawable
+import android.os.Build
 import android.os.Bundle
 import android.util.Base64
 import android.service.notification.NotificationListenerService
@@ -52,17 +53,50 @@ class Notifications : NotificationListenerService() {
     }
 
     /** One of its buttons, pressed on the laptop; `reply` fills a reply field when it has one. */
+    /** Index -1, -2, -3: a call-style notification's Answer, Decline, Hang up. */
+    const val ANSWER = -1
+    const val DECLINE = -2
+    const val HANG_UP = -3
+
+    /**
+     * Sent with leave to start an activity: answering a WhatsApp call opens
+     * its call screen, and Android 14 silently refuses that from a background
+     * app unless the sender allows it.
+     */
+    private fun sendAllowed(pi: android.app.PendingIntent, context: Context, fill: Intent?) {
+      val opts = if (Build.VERSION.SDK_INT >= 34)
+        android.app.ActivityOptions.makeBasic()
+          .setPendingIntentBackgroundActivityStartMode(android.app.ActivityOptions.MODE_BACKGROUND_ACTIVITY_START_ALLOWED)
+          .toBundle()
+      else null
+      pi.send(context, 0, fill, null, null, null, opts)
+    }
+
     fun act(context: Context, key: String, index: Int, reply: String?): Boolean {
-      val action = find(key)?.notification?.actions?.getOrNull(index) ?: return false
+      val n = find(key)?.notification ?: return false
+      if (index < 0) {
+        val extra = when (index) {
+          ANSWER -> Notification.EXTRA_ANSWER_INTENT
+          DECLINE -> Notification.EXTRA_DECLINE_INTENT
+          else -> Notification.EXTRA_HANG_UP_INTENT
+        }
+        @Suppress("DEPRECATION")
+        val pi = n.extras.getParcelable<android.app.PendingIntent>(extra) ?: return false
+        android.util.Log.i("ekatva", "call button $index of ${n.extras.getString(Notification.EXTRA_TEMPLATE) ?: "?"}")
+        sendAllowed(pi, context, null)
+        return true
+      }
+      val action = n.actions?.getOrNull(index) ?: return false
+      android.util.Log.i("ekatva", "notification button $index")
       val inputs = action.remoteInputs
       if (inputs != null && inputs.isNotEmpty() && reply != null) {
         val results = Bundle()
         for (r in inputs) results.putCharSequence(r.resultKey, reply)
         val intent = Intent()
         RemoteInput.addResultsToIntent(inputs, intent, results)
-        action.actionIntent.send(context, 0, intent)
+        sendAllowed(action.actionIntent, context, intent)
       } else {
-        action.actionIntent.send()
+        sendAllowed(action.actionIntent, context, null)
       }
       return true
     }
@@ -96,8 +130,11 @@ class Notifications : NotificationListenerService() {
   private fun emit(sbn: StatusBarNotification, removed: Boolean) {
     if (sbn.packageName == packageName) return
     val n = sbn.notification ?: return
-    // Ongoing ones (music, downloads, ekatva's own) are noise on the laptop.
-    if (!removed && (n.flags and Notification.FLAG_ONGOING_EVENT) != 0) return
+    // An app's call (WhatsApp voice or video, Meet, Signal…): ongoing while it
+    // rings and while it lasts, and exactly what the laptop must show.
+    val call = n.category == Notification.CATEGORY_CALL
+    // Other ongoing ones (music, downloads, ekatva's own) are noise on the laptop.
+    if (!removed && !call && (n.flags and Notification.FLAG_ONGOING_EVENT) != 0) return
     val extras = n.extras
     val app = try {
       packageManager.getApplicationLabel(packageManager.getApplicationInfo(sbn.packageName, 0)).toString()
@@ -114,6 +151,24 @@ class Notifications : NotificationListenerService() {
         // The button that takes typed text (Reply), if one does.
         "reply" to (n.actions?.indexOfFirst { !it.remoteInputs.isNullOrEmpty() }?.takeIf { it >= 0 }),
         "removed" to removed,
+        "call" to call,
+        // A call-style notification (Android 12's CallStyle, WhatsApp's video
+        // calls) says what it is, and keeps Answer / Decline / Hang up apart
+        // from its buttons: the laptop needs both.
+        "callState" to when (extras.getInt(Notification.EXTRA_CALL_TYPE, 0)) {
+          Notification.CallStyle.CALL_TYPE_INCOMING, Notification.CallStyle.CALL_TYPE_SCREENING -> "ringing"
+          Notification.CallStyle.CALL_TYPE_ONGOING -> "active"
+          else -> null
+        },
+        // A video call, as the app marks it (CallStyle's setIsVideo), or says.
+        "video" to (extras.getBoolean(Notification.EXTRA_CALL_IS_VIDEO, false) ||
+          Regex("video", RegexOption.IGNORE_CASE).containsMatchIn(
+            "${extras.getCharSequence(Notification.EXTRA_TEXT) ?: ""} ${extras.getCharSequence(Notification.EXTRA_SUB_TEXT) ?: ""} ${n.channelId ?: ""}")),
+        "callButtons" to listOfNotNull(
+          if (extras.containsKey(Notification.EXTRA_ANSWER_INTENT)) "answer" else null,
+          if (extras.containsKey(Notification.EXTRA_DECLINE_INTENT)) "decline" else null,
+          if (extras.containsKey(Notification.EXTRA_HANG_UP_INTENT)) "hangup" else null,
+        ),
         // So the laptop shows WhatsApp's icon and the sender's photo, not a bell.
         "package" to sbn.packageName,
         "icon" to (if (removed) null else iconOf(sbn.packageName)),

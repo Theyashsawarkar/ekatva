@@ -280,6 +280,17 @@ export const PhoneEvent = z.discriminatedUnion("kind", [
     /** Which of `actions` takes typed text (Reply), if any. */
     reply: z.number().int().nullable().default(null),
     removed: z.boolean().default(false),
+    /** An app's call (WhatsApp, Meet…): ringing, or going on. */
+    call: z.boolean().default(false),
+    /** A call-style notification says which it is (WhatsApp's video calls). */
+    callState: z.enum(["ringing", "active"]).nullish(),
+    /** A video call (the app marks it, or says so). */
+    video: z.boolean().nullish(),
+    /** Its own Answer / Decline / Hang up (pressed with index -1, -2, -3). */
+    callButtons: z
+      .array(z.enum(["answer", "decline", "hangup"]))
+      .max(3)
+      .nullish(),
     /** The app's package (com.whatsapp): its icon is cached by it. */
     // null counts as none: phone apps sent null for "no picture", and every
     // such notification was refused (and retried, blocking calls behind it).
@@ -449,6 +460,10 @@ export const CallNow = z.object({
   number: z.string(),
   contact: z.string().nullable(),
   since: z.number(),
+  /** An app's call (WhatsApp, Meet…), not the phone's own. */
+  app: z.string().nullable().default(null),
+  /** A video call. */
+  video: z.boolean().default(false),
 });
 export type CallNow = z.infer<typeof CallNow>;
 
