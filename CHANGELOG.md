@@ -2,7 +2,7 @@
 
 Newest first. Releases are tags (`vX.Y.Z`); every package's `version` moves together.
 
-## Unreleased
+## v0.1.0 -- 2026-11-17
 
 - The laptop's window has its own name: **Darpaṇa** (दर्पण, the mirror; it was ekatva-vyom), `kosha install darpana`; `ekatva window` opens `vyom darpana`.
 - Permissions, all in one place (Settings, This phone, Permissions): every
