@@ -395,6 +395,7 @@ describe("KDE Connect's features, laptop and phone together", () => {
       app: "Slack",
       title: "#general",
       text: "deploy done",
+      urgency: 1, // no urgency hint: normal
     });
     // One of ours is never sent back to the phone.
     desktop.handle(

@@ -4,7 +4,7 @@ description: "Vim-like keys in the laptop's popup: Normal and Insert mode, Space
 ---
 
 On the laptop, ekatva is a [Vyom](https://github.com/Theyashsawarkar/vyom) popup
-([ekatva-vyom](https://github.com/Theyashsawarkar/ekatva-vyom)), driven by the
+([Darpaṇa](https://github.com/Theyashsawarkar/darpana)), driven by the
 keyboard the way every Vayu tool is. In Vayu, <kbd>Super</kbd>+<kbd>o</kbd>
 opens it and <kbd>Super</kbd>+<kbd>Ctrl</kbd>+<kbd>o</kbd> opens it on pairing.
 

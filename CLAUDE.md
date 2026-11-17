@@ -6,7 +6,7 @@ CLI), `apps/mobile` (React Native / Expo, dev build), `apps/site` (Astro
 Starlight, GitHub Pages); `packages/protocol` (the tRPC contract, zod), `packages/link`
 (Noise, encrypted socket, pairing), `packages/config`.
 The laptop's window is a Vyom popup in its own repo
-(~/personal/ekatva-vyom, Python GTK), a client of the daemon's socket.
+(~/personal/darpana, Darpaṇa, Python GTK), a client of the daemon's socket.
 
 - JS/TS only; the only exception is small Expo native modules in
   `apps/mobile/modules/` for Android APIs JS can't reach.

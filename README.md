@@ -255,7 +255,7 @@ packages/
 ```
 
 The laptop's window is a [Vyom](https://github.com/Theyashsawarkar/vyom) popup in
-its own repo, [ekatva-vyom](https://github.com/Theyashsawarkar/ekatva-vyom).
+its own repo, [Darpaṇa](https://github.com/Theyashsawarkar/darpana).
 
 A few Android features have no JavaScript API (placing calls, SMS, the
 notification listener, locking the screen, a foreground service to stay
@@ -294,7 +294,7 @@ walks through one end to end.
 | From anywhere: tunnel and encrypted rendezvous | done, tested |
 | Media: players, volume, brightness | done, tested |
 | Screen and input | planned |
-| Laptop window ([Vyom popup](https://github.com/Theyashsawarkar/ekatva-vyom)) | done: the phone at a glance, messages, calls, files, the log, devices and pairing |
+| Laptop window ([Vyom popup](https://github.com/Theyashsawarkar/darpana)) | done: the phone at a glance, messages, calls, files, the log, devices and pairing |
 | Website and documentation | done: [theyashsawarkar.github.io/ekatva](https://theyashsawarkar.github.io/ekatva/) |
 | Phone app | core done and tested against the daemon; screens done; first device build next |
 | Calls, SMS, notifications, lock (native module) | built; first device test next |

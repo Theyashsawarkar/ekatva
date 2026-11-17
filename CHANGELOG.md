@@ -4,6 +4,7 @@ Newest first. Releases are tags (`vX.Y.Z`); every package's `version` moves toge
 
 ## Unreleased
 
+- The laptop's window has its own name: **Darpaṇa** (दर्पण, the mirror; it was ekatva-vyom), `kosha install darpana`; `ekatva window` opens `vyom darpana`.
 - Permissions, all in one place (Settings, This phone, Permissions): every
   permission ekatva uses on the phone, needed ones first, with what each is
   for and whether Android granted it; "7 of 9 allowed" and one segment each;

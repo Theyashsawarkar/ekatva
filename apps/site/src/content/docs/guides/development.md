@@ -24,7 +24,7 @@ packages/config     tsconfig
 ```
 
 The laptop's window is a [Vyom](https://github.com/Theyashsawarkar/vyom) popup
-in its own repo, [ekatva-vyom](https://github.com/Theyashsawarkar/ekatva-vyom):
+in its own repo, [Darpaṇa](https://github.com/Theyashsawarkar/darpana):
 a client of the daemon's socket, like the CLI.
 
 ## Rules
