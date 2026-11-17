@@ -32,6 +32,11 @@ export interface NotificationEvent {
   /** The action that takes typed text, if any. */
   reply: number | null;
   removed: boolean;
+  /** An app's call (WhatsApp voice or video…), ringing or going on. */
+  call?: boolean;
+  callState?: "ringing" | "active" | null;
+  video?: boolean;
+  callButtons?: ("answer" | "decline" | "hangup")[];
   /** The app's package, its icon and the notification's picture (PNG, base64). */
   package?: string;
   icon?: string;

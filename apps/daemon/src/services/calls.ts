@@ -32,6 +32,8 @@ export class CallState {
         // The timer starts when it's answered, not when it began to ring.
         since:
           same && this.now?.state === e.state ? (this.now?.since ?? this.clock()) : this.clock(),
+        app: null,
+        video: false,
       };
     } else {
       // Ended or missed: only that phone's call is over.
@@ -39,6 +41,52 @@ export class CallState {
       next = null;
     }
     this.set(next);
+  }
+
+  /** How to end an app's call: its notification's hang-up button. */
+  private hang: { device: string; id: string; index: number } | null = null;
+
+  /**
+   * An app's call (WhatsApp voice or video, Meet…), from its notification:
+   * ringing while it offers Answer, going on once it doesn't, over when the
+   * notification goes. `hangup` is the button that ends it, if any.
+   */
+  onApp(
+    device: string,
+    name: string,
+    app: string,
+    id: string,
+    state: "ringing" | "active" | "ended",
+    contact: string,
+    hangup: number,
+    video = false,
+  ): void {
+    const mine = this.now?.device === device && this.now?.app === app;
+    if (state === "ended") {
+      if (mine) {
+        this.hang = null;
+        this.set(null);
+      }
+      return;
+    }
+    // The phone's own call wins: an app's ringing doesn't replace it.
+    if (this.now && !mine && this.now.app === null) return;
+    this.hang = hangup !== -99 ? { device, id, index: hangup } : null; // -99: none
+    this.set({
+      device,
+      name,
+      state,
+      number: "",
+      contact: contact || (mine ? (this.now?.contact ?? null) : null),
+      since: mine && this.now?.state === state ? (this.now?.since ?? this.clock()) : this.clock(),
+      app,
+      video: video || (mine && (this.now?.video ?? false)),
+    });
+  }
+
+  /** The button that ends the call now, when it's an app's. */
+  hangupButton(): { device: string; id: string; index: number } | null {
+    return this.now?.app ? this.hang : null;
   }
 
   /** The phone went away: its call can't be followed any more. */

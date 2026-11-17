@@ -252,12 +252,17 @@ function watchCallForWaybar(): void {
   let now: CallNow | null = null;
   const draw = () => {
     if (!now) return out({ text: "", class: "none", tooltip: "" });
-    const who = now.contact ?? (now.number || "Unknown");
+    // An app's call says which app: "WhatsApp · Suhani".
+    const app = now.app ? `${now.app}${now.video ? " video" : ""} · ` : now.video ? "video · " : "";
+    const who = `${app}${now.contact ?? (now.number || "Unknown")}`;
     const ringing = now.state === "ringing";
     const time = callFor(Date.now() - now.since);
+    // A video call's icon is a picture (the camera facing right, the bar's
+    // style.css), not a glyph: no font has it facing that way.
+    const icon = now.video ? "" : "\u{f03f2}  ";
     out({
-      text: ringing ? `\u{f03f2}  ${who} · calling` : `\u{f03f2}  ${who} · ${time}`,
-      class: ringing ? "ringing" : "active",
+      text: ringing ? `${icon}${who} · calling` : `${icon}${who} · ${time}`,
+      class: [ringing ? "ringing" : "active", ...(now.video ? ["video"] : [])],
       tooltip: `${ringing ? "Incoming call from" : "On a call with"} ${who}${now.contact && now.number ? ` (${now.number})` : ""} on ${now.name}${ringing ? "" : ` · ${time}`}\nClick: open ekatva · right click: hang up`,
     });
   };
@@ -489,7 +494,7 @@ async function main(argv: string[]): Promise<void> {
         });
         process.stdout.write(
           now
-            ? `${now.state === "ringing" ? "ringing" : "on a call"}: ${now.contact ?? now.number ?? "unknown"} on ${now.name} · ${callFor(Date.now() - now.since)}\n`
+            ? `${now.state === "ringing" ? "ringing" : "on a call"}: ${now.contact ?? now.number ?? "unknown"}${now.app ? ` (${now.app})` : ""} on ${now.name} · ${callFor(Date.now() - now.since)}\n`
             : "no call\n",
         );
         break;

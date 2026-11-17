@@ -205,7 +205,8 @@ export const phoneRouter = api.router({
       .input(
         z.object({
           id: z.string().max(500),
-          index: z.number().int().min(0).max(10),
+          // -1, -2, -3: a call-style notification's Answer, Decline, Hang up.
+          index: z.number().int().min(-3).max(10),
           reply: z.string().max(5000).nullable().default(null),
         }),
       )

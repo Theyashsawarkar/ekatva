@@ -25,7 +25,15 @@ export interface BridgePeer {
 }
 
 type Origin =
-  | { kind: "notification"; device: string; id: string; reply: number | null; actions: number }
+  | {
+      kind: "notification";
+      device: string;
+      id: string;
+      reply: number | null;
+      actions: number;
+      /** An app's call card: its Answer and Decline, by button index. */
+      call?: { answer: number; reject: number };
+    }
   | { kind: "call"; device: string }
   | { kind: "missed"; device: string; number: string }
   | { kind: "sms"; device: string; from: string; who: string };
@@ -114,6 +122,7 @@ export class NotificationBridge {
       }
       return;
     }
+    if (e.kind === "notification" && e.call) return this.onAppCall(device, name, e);
     if (e.kind === "notification") {
       const k = `${device}|${e.id}`;
       const had = this.byPhoneKey.get(k);
@@ -255,6 +264,61 @@ export class NotificationBridge {
     }
   }
 
+  /**
+   * An app's call (WhatsApp voice or video…): while it rings, a call card
+   * with the app's own Answer and Decline; once it's going on, no card (the
+   * bar shows it); when its notification goes, the card goes.
+   */
+  private async onAppCall(
+    device: string,
+    name: string,
+    e: Extract<PhoneEvent, { kind: "notification" }>,
+  ): Promise<void> {
+    const k = `${device}|${e.id}`;
+    const had = this.byPhoneKey.get(k);
+    const c = appCall(e);
+    if (e.removed || c.state !== "ringing") {
+      if (had !== undefined) {
+        this.byPhoneKey.delete(k);
+        this.fromPhone.delete(had);
+        await this.desktop.close(had);
+      }
+      return;
+    }
+    const video = e.video === true || /video/i.test(`${e.title} ${e.text}`);
+    const kindOf = video ? "video call" : "call";
+    const actions: [string, string][] = [["answer", e.actions[c.answer] ?? "Answer"]];
+    if (c.reject !== NO_BUTTON) actions.push(["reject", e.actions[c.reject] ?? "Decline"]);
+    const id = await this.quiet(
+      this.desktop.notify({
+        app: name,
+        title: `Incoming ${e.app} ${kindOf}: ${e.title || "Unknown"}`,
+        // The card shows the caller big and this line under it: what kind of call.
+        body: `${e.app} ${kindOf}`,
+        icon: video ? "camera-video" : "call-start",
+        urgency: 2,
+        hints: {
+          ...callHints("call", name, e.title || null, ""),
+          "x-ekatva-app": e.app,
+          ...(video ? { "x-ekatva-video": "1" } : {}),
+        },
+        actions,
+        ...(had !== undefined ? { replaces: had } : {}),
+      }),
+      "showing an app's call",
+    );
+    if (id === undefined) return;
+    this.byPhoneKey.set(k, id);
+    this.fromPhone.set(id, {
+      kind: "notification",
+      device,
+      id: e.id,
+      reply: null,
+      actions: e.actions.length,
+      call: { answer: c.answer, reject: c.reject },
+    });
+  }
+
   private async action(id: number, key: string): Promise<void> {
     const o = this.fromPhone.get(id);
     if (!o) return;
@@ -287,9 +351,17 @@ export class NotificationBridge {
       return;
     }
     if (o.kind === "notification") {
+      // An app's call card: Answer and Decline are the app's own buttons.
+      const callIndex =
+        o.call && key === "answer"
+          ? o.call.answer
+          : o.call && key === "reject"
+            ? o.call.reject
+            : NO_BUTTON;
       const m = /^a(\d+)$/.exec(key);
-      if (!m) return;
-      const index = Number(m[1]);
+      if (!m && callIndex === NO_BUTTON) return;
+      const index = callIndex !== NO_BUTTON ? callIndex : Number(m?.[1]);
+      this.log(`${p.name}: pressing ${key} (${index}) on its notification`);
       let reply: string | null = null;
       if (index === o.reply) {
         reply = await this.prompt("Reply", `From ${p.name}`);
@@ -421,3 +493,36 @@ const DIALERS = new Set([
 export function isDialer(pkg: string | undefined, app: string): boolean {
   return pkg ? DIALERS.has(pkg) : app === "Phone";
 }
+
+/**
+ * What an app's call notification says: ringing (it offers Answer), going on
+ * (it doesn't), or over (it's gone), and which buttons answer and end it.
+ */
+export function appCall(e: Extract<PhoneEvent, { kind: "notification" }>): {
+  state: "ringing" | "active" | "ended";
+  answer: number;
+  reject: number;
+} {
+  if (e.removed) return { state: "ended", answer: NO_BUTTON, reject: NO_BUTTON };
+  const has = (b: "answer" | "decline" | "hangup") => e.callButtons?.includes(b) ?? false;
+  const label = (re: RegExp) => {
+    const i = e.actions.findIndex((a) => re.test(a));
+    return i >= 0 ? i : NO_BUTTON;
+  };
+  // Its own Answer / Decline / Hang up first (a call-style notification keeps
+  // them apart from its buttons), else its buttons by their words.
+  const answer = has("answer") ? -1 : label(/answer|accept|pick ?up|join/i);
+  const state = e.callState ?? (answer !== NO_BUTTON ? "ringing" : "active");
+  const reject =
+    state === "ringing" && has("decline")
+      ? -2
+      : has("hangup")
+        ? -3
+        : has("decline")
+          ? -2
+          : label(/decline|reject|hang ?up|end|leave|dismiss/i);
+  return { state, answer, reject };
+}
+
+/** No such button. */
+export const NO_BUTTON = -99;

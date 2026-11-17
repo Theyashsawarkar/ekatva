@@ -46,6 +46,18 @@ Newest first. Releases are tags (`vX.Y.Z`); every package's `version` moves toge
   as none, a refused event is dropped instead of retried (only a lost
   connection retries), calls go to the front of the outbox, and the laptop
   logs a refused event (which field, why).
+- **WhatsApp calls (voice and video) and other apps' calls reach the
+  laptop**: ringing, as the same incoming-call card with the app's own Answer
+  and Decline; going on, as the call on the bar ("WhatsApp · Suhani · 3m")
+  and in the popup; Hang up ends it with the app's own button. The phone
+  sent no ongoing notifications at all (music, downloads); now an app's call
+  goes, marked `call`. A call-style notification (WhatsApp's video calls)
+  says itself whether it rings or goes on, with its own Answer / Decline /
+  Hang up: those are used, so a video call rings first. Its buttons are
+  pressed with leave to open the app's call screen (Android 14 refused it
+  from the background, so answering from the laptop did nothing).
+  A video call says so (CallStyle's video flag, or its words): "video
+  call" on the card, "WhatsApp video · Suhani · 3m" on the bar.
 - **One card per call.** The phone's dialer's own notifications (the
   incoming call, "Missed call") aren't mirrored any more: ekatva shows calls
   itself, so one missed call made two or three cards. A missed call here has

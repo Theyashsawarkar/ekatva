@@ -66,7 +66,7 @@ import { type FirewallProblem, firewallProblem } from "./services/firewall.js";
 import { InputService, type Runner } from "./services/input.js";
 import { type Host, JyotiService } from "./services/jyoti.js";
 import { type MediaHost, MediaService } from "./services/media.js";
-import { NotificationBridge, type Prompt } from "./services/notifyBridge.js";
+import { appCall, isDialer, NotificationBridge, type Prompt } from "./services/notifyBridge.js";
 import { Rendezvous } from "./services/rendezvous.js";
 import { RootBridge } from "./services/root.js";
 import { type ShareHost, ShareInbox } from "./services/share.js";
@@ -775,6 +775,13 @@ export class Daemon {
         if (e.kind === "call" || e.kind === "sms")
           this.log(`${name}: ${e.kind}${e.kind === "call" ? ` ${e.state}` : ""}`);
         if (e.kind === "call") this.calls.onEvent(from, name, e);
+        // An app's call (WhatsApp…): the call in progress, for the bar and the popup.
+        if (e.kind === "notification" && e.call && !isDialer(e.package, e.app)) {
+          const c = appCall(e);
+          this.log(`${name}: ${e.app} call ${c.state}`);
+          const video = e.video === true || /video/i.test(`${e.title} ${e.text}`);
+          this.calls.onApp(from, name, e.app, e.id, c.state, e.title, c.reject, video);
+        }
         if (this.bridge && e.kind !== "battery") await this.bridge.fromPhoneEvent(from, name, e);
         else await this.system.showPhoneEvent(name, e);
       },
@@ -1021,6 +1028,25 @@ export class Daemon {
       ];
       if (typeof fn !== "function")
         throw new TRPCError({ code: "NOT_FOUND", message: `the phone has no ${path}` });
+      // An app's call (WhatsApp…) ends with its own Hang up button, not the phone's.
+      const button = path === "calls.hangUp" ? this.calls.hangupButton() : null;
+      if (button) {
+        const end = await peer.phone.notifications.act.mutate({
+          id: button.id,
+          index: button.index,
+          reply: null,
+        });
+        this.calls.onApp(
+          button.device,
+          this.devices.get(button.device)?.name ?? "phone",
+          this.calls.get()?.app ?? "",
+          button.id,
+          "ended",
+          "",
+          -1,
+        );
+        return end;
+      }
       const out = await fn(input);
       // Answered or hung up from here: follow it at once. The phone's own call
       // events can come late or not at all (Android holds broadcasts back from
