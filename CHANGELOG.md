@@ -2,6 +2,10 @@
 
 Newest first. Releases are tags (`vX.Y.Z`); every package's `version` moves together.
 
+## Unreleased
+
+- A plan for what comes next, `docs/plans/always-linked-and-the-hub.md`: the laptop keeps a secure tunnel up once a phone is paired (a stable address, a QR that attaches a phone to it, a link that survives changing networks), and ekatva becomes the hub every Vayu phone app (nāda, vāgdevī…) uses to reach the laptop.
+
 ## v0.1.1 -- 2026-11-18
 
 - The website and README show the phone app too: Home, Agents, an agent's conversation and Files, shot with `apps/mobile/scripts/demo/shoot.sh` (the real app in a headless emulator, paired with a made-up laptop in a throwaway folder: made-up files, agents, song; nothing real is read or touched).
