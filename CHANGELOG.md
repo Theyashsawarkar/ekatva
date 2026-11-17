@@ -4,6 +4,8 @@ Newest first. Releases are tags (`vX.Y.Z`); every package's `version` moves toge
 
 ## Unreleased
 
+- **The phone app is built from source, signed with your own key**: `apps/mobile/scripts/build-apk.sh` builds a standalone APK and signs it with a key it makes on the first run in `~/.config/ekatva-release` (never in the repo; back it up). It updates a debug-signed install in place (a key rotation proof), so nobody pairs again. No APK is hosted: the app only works with a laptop running ekatva, and whoever runs that builds the app too.
+- A test used a real phone number; it uses a made-up one now.
 - The website and README show the laptop's window (Darpaṇa) in screenshots, with a made-up phone and people.
 
 ## v0.1.0 -- 2026-11-17

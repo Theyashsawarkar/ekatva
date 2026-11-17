@@ -277,7 +277,8 @@ pnpm dev          # daemon + desktop window, watching
 pnpm test         # every package's tests
 pnpm typecheck
 pnpm --filter site dev     # the website, locally
-pnpm --filter mobile android   # build and install the phone app (dev build)
+apps/mobile/scripts/build-apk.sh   # the phone app, signed with your own key (made on first run)
+adb install -r apps/mobile/dist/ekatva.apk
 ```
 
 ## Adding a feature

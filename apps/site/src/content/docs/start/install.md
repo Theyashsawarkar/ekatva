@@ -3,9 +3,10 @@ title: "Install"
 description: "Run the ekatva daemon on your laptop."
 ---
 
-:::caution[Before the first release]
-There's no packaged release yet. These steps build from source; the phone app
-isn't released either, so pairing needs a development build of it.
+:::note[Built from source, by design]
+ekatva is one half of a pair: the phone app is useless without a laptop running
+its service. So there's no APK to download: whoever runs the service builds the
+app from this same code, signed with their own key, in one command.
 :::
 
 ## The laptop
@@ -51,8 +52,21 @@ sudo ufw allow from fe80::/10 to any port 47100 proto tcp comment 'ekatva LAN'
 
 ## The phone
 
-The Android app is in `apps/mobile`. Until it's released, build it with
-`pnpm --filter mobile android` (needs the Android SDK).
+The Android app is in `apps/mobile`. With the Android SDK and a JDK, build it
+and install it over USB:
+
+```sh
+apps/mobile/scripts/build-apk.sh          # → apps/mobile/dist/ekatva.apk
+adb install -r apps/mobile/dist/ekatva.apk
+```
+
+The first run makes **your own signing key** in `~/.config/ekatva-release`
+(`$EKATVA_KEYS` to move it), with a random password in a file only you can
+read. It never goes in the repo. **Back it up**: every update must be signed
+with the same key, or Android refuses it, and the app has to be reinstalled
+and paired again. A development build (`pnpm --filter mobile android`, signed
+with Android's debug key) updates in place to your signed one: the key
+carries a rotation proof from the debug key.
 
 The first time it opens, the app makes this phone's keys and seals them
 with a key in the Android keystore that opens only right after your
