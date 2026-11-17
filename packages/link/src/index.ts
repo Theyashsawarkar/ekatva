@@ -1,3 +1,4 @@
+export * from "./beacon.js";
 export * from "./bytes.js";
 export * from "./channel.js";
 export * from "./noise.js";

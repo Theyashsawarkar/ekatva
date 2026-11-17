@@ -3,10 +3,13 @@
  * `PhoneServices`; the same capability checks and journal apply, on the
  * phone, with the phone's own grants for this laptop.
  */
+
 import { z } from "zod";
+import { type Appearance, AppearanceMode } from "./appearance.js";
 import type { Capability } from "./capabilities.js";
 import { type Done, type FileService, filesRouter } from "./files.js";
 import { journalRouter, type Undoer } from "./journalRouter.js";
+import { type ShareService, shareRouter } from "./share.js";
 import { type Act, type BaseContext, createApi } from "./trpc.js";
 
 export const PhoneStatus = z.object({
@@ -15,6 +18,8 @@ export const PhoneStatus = z.object({
   signal: z.object({ bars: z.number(), network: z.string() }).nullable(),
   locked: z.boolean().nullable(),
   awake: z.boolean(),
+  /** Find my phone is ringing it. */
+  ringing: z.boolean().optional(),
 });
 export type PhoneStatus = z.infer<typeof PhoneStatus>;
 
@@ -29,16 +34,47 @@ export const Sms = z.object({
 });
 export type Sms = z.infer<typeof Sms>;
 
+/** One line of the phone's call history, newest first. */
+export const CallRecord = z.object({
+  id: z.string(),
+  number: z.string(),
+  contact: z.string().nullable(),
+  kind: z.enum(["in", "out", "missed", "declined"]),
+  at: z.number(),
+  /** Seconds; 0 for a call that wasn't picked up. */
+  seconds: z.number(),
+});
+export type CallRecord = z.infer<typeof CallRecord>;
+
+/** One of the laptop's notifications, shown on the phone. */
+export const LaptopNotification = z.object({
+  id: z.string().max(64),
+  app: z.string().max(200),
+  title: z.string().max(1000),
+  text: z.string().max(10_000),
+  /** The app's icon, a PNG in base64 (so the phone shows Firefox's, not ekatva's). */
+  icon: z.string().max(200_000).optional(),
+  /** The notification's own picture (an avatar, a screenshot's thumbnail), PNG/JPEG in base64. */
+  picture: z.string().max(400_000).optional(),
+  /** 0 low, 1 normal, 2 urgent. */
+  urgency: z.number().int().min(0).max(2).optional(),
+});
+export type LaptopNotification = z.infer<typeof LaptopNotification>;
+
 export interface PhoneServices {
   status(): Promise<PhoneStatus>;
   lock(): Promise<Done<null>>;
-  ring(): Promise<Done<null>>;
-  /** Keep the phone's screen on (its caffeine). */
+  /** Rings until stopped, at full volume, through silent and Do Not Disturb. */
+  ring(from: string): Promise<Done<null>>;
+  stopRinging(): Promise<Done<null>>;
+  /** Keep the phone's screen on (jyoti, the other way). */
   keepAwake(on: boolean): Promise<Done<null>>;
   calls: {
     dial(number: string): Promise<Done<null>>;
     answer(): Promise<Done<null>>;
     hangUp(): Promise<Done<null>>;
+    /** The call history, newest first (needs the call log permission on the phone). */
+    log(limit: number): Promise<CallRecord[]>;
   };
   sms: {
     threads(): Promise<{ thread: string; contact: string | null; last: Sms }[]>;
@@ -46,7 +82,22 @@ export interface PhoneServices {
     send(to: string, text: string): Promise<Done<null>>;
   };
   clipboard: { get(): Promise<string>; set(text: string): Promise<Done<null>> };
+  appearance: {
+    /** The phone's system mode now. */
+    get(): Promise<Appearance>;
+    set(mode: AppearanceMode): Promise<Done<Appearance>>;
+  };
+  notifications: {
+    /** Dismissed on the laptop: gone on the phone. */
+    dismiss(id: string): Promise<Done<null>>;
+    /** One of its buttons; `reply` for the one that takes text. */
+    act(id: string, index: number, reply: string | null): Promise<Done<null>>;
+    /** The laptop's own notifications, shown on the phone. */
+    show(n: LaptopNotification): Promise<Done<null>>;
+    close(id: string): Promise<Done<null>>;
+  };
   files: FileService;
+  share: ShareService;
   undo: Undoer;
 }
 
@@ -83,7 +134,17 @@ export const phoneRouter = api.router({
     .mutation(async ({ ctx }) => done(ctx, await ctx.services.lock())),
   ring: p
     .meta({ cap: "phone.lock" })
-    .mutation(async ({ ctx }) => done(ctx, await ctx.services.ring())),
+    .mutation(async ({ ctx }) => done(ctx, await ctx.services.ring(ctx.actor.name))),
+  stopRinging: p
+    .meta({ cap: "phone.lock" })
+    .mutation(async ({ ctx }) => done(ctx, await ctx.services.stopRinging())),
+  appearance: api.router({
+    get: p.meta({ cap: "phone.appearance" }).query(({ ctx }) => ctx.services.appearance.get()),
+    set: p
+      .meta({ cap: "phone.appearance" })
+      .input(z.object({ mode: AppearanceMode }))
+      .mutation(async ({ ctx, input }) => done(ctx, await ctx.services.appearance.set(input.mode))),
+  }),
   keepAwake: p
     .meta({ cap: "phone.lock" })
     .input(z.object({ on: z.boolean() }))
@@ -99,6 +160,10 @@ export const phoneRouter = api.router({
     hangUp: p
       .meta({ cap: "phone.calls" })
       .mutation(async ({ ctx }) => done(ctx, await ctx.services.calls.hangUp())),
+    log: p
+      .meta({ cap: "phone.calls", audit: true, summary: () => "Read the call history" })
+      .input(z.object({ limit: z.number().int().min(1).max(200).default(50) }))
+      .query(({ ctx, input }) => ctx.services.calls.log(input.limit)),
   }),
   sms: api.router({
     threads: p
@@ -128,6 +193,37 @@ export const phoneRouter = api.router({
       .input(z.object({ text: z.string().max(1_000_000) }))
       .mutation(async ({ ctx, input }) => done(ctx, await ctx.services.clipboard.set(input.text))),
   }),
+  notifications: api.router({
+    dismiss: p
+      .meta({ cap: "phone.notifications" })
+      .input(z.object({ id: z.string().max(500) }))
+      .mutation(async ({ ctx, input }) =>
+        done(ctx, await ctx.services.notifications.dismiss(input.id)),
+      ),
+    act: p
+      .meta({ cap: "phone.notifications" })
+      .input(
+        z.object({
+          id: z.string().max(500),
+          index: z.number().int().min(0).max(10),
+          reply: z.string().max(5000).nullable().default(null),
+        }),
+      )
+      .mutation(async ({ ctx, input }) =>
+        done(ctx, await ctx.services.notifications.act(input.id, input.index, input.reply)),
+      ),
+    show: p
+      .meta({ cap: "phone.notifications", record: false })
+      .input(LaptopNotification)
+      .mutation(async ({ ctx, input }) => done(ctx, await ctx.services.notifications.show(input))),
+    close: p
+      .meta({ cap: "phone.notifications", record: false })
+      .input(z.object({ id: z.string().max(64) }))
+      .mutation(async ({ ctx, input }) =>
+        done(ctx, await ctx.services.notifications.close(input.id)),
+      ),
+  }),
+  share: shareRouter(api, "phone.share", (ctx) => ctx.services.share),
   files: filesRouter(api, "phone.files", null, (ctx) => ctx.services.files),
   journal: journalRouter(api, "phone.journal", (ctx) => ctx.services.undo, capOf),
 });

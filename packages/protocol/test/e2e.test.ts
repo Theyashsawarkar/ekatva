@@ -113,7 +113,7 @@ async function setup(grants: Capability[]) {
       cpu: 12,
       temperature: 41,
       uptime: 3600,
-      caffeine: "off",
+      jyoti: "off",
       waiting: 1,
       locked: false,
     }),

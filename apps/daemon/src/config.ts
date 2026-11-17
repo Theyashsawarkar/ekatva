@@ -26,7 +26,7 @@ const Config = z.object({
   port: z.number().int().min(1024).max(65535).default(47100),
   /** Where to listen: all networks, so the phone can reach it on Wi-Fi. */
   host: z.string().default("0.0.0.0"),
-  /** Announce it on the local network (mDNS), so the phone finds it. */
+  /** Tell paired phones on the same network where it is (an encrypted UDP beacon). */
   advertise: z.boolean().default(true),
   files: z
     .object({

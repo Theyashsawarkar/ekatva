@@ -41,6 +41,31 @@ when nobody sits in between. If someone else used your QR first, their
 connection shows different emoji (and your phone's fails, because the token
 is spent). You only confirm what you can see on both screens.
 
+## On the same network
+
+When the phone and the laptop share a network (a Wi-Fi, or the laptop on the
+phone's own hotspot), they talk directly, with no internet needed and nothing
+in between:
+
+- Every 3 seconds, while a paired phone isn't connected directly, the laptop
+  broadcasts a **beacon** on each local network: 38 bytes on UDP port 47101,
+  one per paired phone, encrypted with a key only that pair can compute. It
+  carries the time and the laptop's port, nothing else: no name, no key, and
+  a fresh random nonce each time, so others on the network can't tell who it
+  is or follow it from one network to the next.
+- The phone listens for it, and connects to wherever the beacon came from.
+  A copied beacon is refused after two minutes, and the connection must pass
+  the Noise handshake against the laptop's key anyway: a beacon only says
+  where to knock.
+- Connected through the tunnel and then you come home? As soon as the phone
+  hears the beacon it opens the direct link and drops the tunnel.
+- Containers' and VPNs' interfaces (`docker0`, `br-…`, `tailscale0`…) get no
+  beacons and aren't offered to the phone.
+
+The window's header and `ekatva status` say how each phone is connected:
+*direct* (same network) or *away* (through the tunnel). Both are end to end
+encrypted.
+
 ## From anywhere
 
 `ekatva pair` opens a tunnel and the QR code carries its URL as well as the

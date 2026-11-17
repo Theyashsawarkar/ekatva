@@ -40,7 +40,7 @@ An agent without MCP can use the command line instead (`ekatva status`,
 | `call_hang_up` | end the current call | |
 | `phone_clipboard_get`, `phone_clipboard_set` | the phone's clipboard | |
 | `phone_files_list`, `phone_files_read` | the phone's shared folders | |
-| `caffeine_set` | keep the laptop awake (off, on, high), for a while | |
+| `jyoti_set` | jyoti: keep the laptop awake (off = Śānta; on = Akhaṇḍa; high = Nandādīpa, with the lid closed), for a while | |
 | `log_recent` | the latest entries of the action log | |
 
 ## Safety

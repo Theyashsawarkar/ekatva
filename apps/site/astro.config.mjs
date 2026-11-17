@@ -25,7 +25,7 @@ export default defineConfig({
           items: [
             "features/agents",
             "features/files",
-            "features/caffeine",
+            "features/jyoti",
             "features/media",
             "features/phone",
             "features/root",

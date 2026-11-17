@@ -12,7 +12,14 @@ import { randomBytes } from "node:crypto";
 import { createReadStream } from "node:fs";
 import * as fs from "node:fs/promises";
 import { basename, dirname, join, resolve, sep } from "node:path";
-import type { Done, FileAccess, FileEntry, FileService, Undo } from "@ekatva/protocol";
+import type {
+  Done,
+  FileAccess,
+  FileEntry,
+  FileService,
+  FilesOverview,
+  Undo,
+} from "@ekatva/protocol";
 import { TRPCError } from "@trpc/server";
 import { dirs, expand, tilde } from "../paths.js";
 
@@ -278,6 +285,57 @@ export class LaptopFiles implements FileService {
           : 1
         : x.name.localeCompare(y.name),
     );
+  }
+
+  /** Space left, and the newest files in the shared folders (a bounded, shallow walk). */
+  async overview(a: FileAccess): Promise<FilesOverview> {
+    const first = this.roots[0];
+    let disk: FilesOverview["disk"] = null;
+    if (first) {
+      try {
+        const st = await fs.statfs(first);
+        disk = { total: st.blocks * st.bsize, free: st.bavail * st.bsize };
+      } catch {
+        // not a real file system: no numbers
+      }
+    }
+    const SKIP = /^(\.|node_modules$|__pycache__$|target$|dist$|build$|out$|vendor$)/;
+    const found: { path: string; mtime: number }[] = [];
+    let seen = 0;
+    const walk = async (dir: string, depth: number): Promise<void> => {
+      if (depth > 3 || seen > 6000) return;
+      let names: string[];
+      try {
+        names = await fs.readdir(dir);
+      } catch {
+        return;
+      }
+      for (const n of names) {
+        if (SKIP.test(n) || ++seen > 6000) continue;
+        const p = join(dir, n);
+        if (this.forbidden.some((f) => inside(p, f))) continue;
+        if (!a.allowPrivate && this.privates.some((x) => inside(p, x))) continue;
+        let st: Awaited<ReturnType<typeof fs.lstat>>;
+        try {
+          st = await fs.lstat(p);
+        } catch {
+          continue;
+        }
+        if (st.isDirectory()) await walk(p, depth + 1);
+        else if (st.isFile()) found.push({ path: p, mtime: st.mtimeMs });
+      }
+    };
+    for (const r of this.roots) await walk(r, 0);
+    found.sort((x, y) => y.mtime - x.mtime);
+    const recent: FileEntry[] = [];
+    for (const f of found.slice(0, 12)) {
+      try {
+        recent.push(await this.entry(f.path));
+      } catch {
+        // gone since
+      }
+    }
+    return { disk, recent };
   }
 
   async stat(path: string, a: FileAccess): Promise<FileEntry> {

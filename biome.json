@@ -11,7 +11,8 @@
       "!apps/mobile/android",
       "!**/android/build",
       "!**/*.html",
-      "!**/*.md"
+      "!**/*.md",
+      "!pnpm-lock.yaml"
     ]
   },
   "formatter": {
@@ -50,29 +51,6 @@
           },
           "style": {
             "noNonNullAssertion": "off"
-          }
-        }
-      }
-    },
-    {
-      "includes": ["apps/desktop/src/renderer/**"],
-      "linter": {
-        "rules": {
-          "correctness": {
-            "noComponentHookFactories": "off"
-          }
-        }
-      }
-    },
-    {
-      "includes": [
-        "apps/desktop/src/renderer/src/hooks.ts",
-        "apps/desktop/src/renderer/src/keys.ts"
-      ],
-      "linter": {
-        "rules": {
-          "correctness": {
-            "useExhaustiveDependencies": "off"
           }
         }
       }

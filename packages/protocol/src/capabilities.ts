@@ -44,10 +44,16 @@ export const CAPABILITIES = {
   power: {
     side: "laptop",
     risk: "medium",
-    title: "Lock, sleep, caffeine",
-    detail: "including staying on with the lid closed",
+    title: "Lock, sleep, jyoti",
+    detail: "keeping it awake, even with the lid closed",
   },
   clipboard: { side: "laptop", risk: "medium", title: "The clipboard", detail: "read and set it" },
+  appearance: {
+    side: "laptop",
+    risk: "low",
+    title: "Light and dark",
+    detail: "switch the laptop between light and dark mode",
+  },
   input: {
     side: "laptop",
     risk: "high",
@@ -65,6 +71,18 @@ export const CAPABILITIES = {
     risk: "low",
     title: "Notifications",
     detail: "see and dismiss the laptop's",
+  },
+  terminal: {
+    side: "laptop",
+    risk: "critical",
+    title: "A terminal on the laptop",
+    detail: "a shell as you, in your tmux sessions",
+  },
+  share: {
+    side: "laptop",
+    risk: "medium",
+    title: "Send files and links",
+    detail: "files land in ~/Downloads, links open in the browser, text on the clipboard",
   },
   root: {
     side: "laptop",
@@ -117,11 +135,23 @@ export const CAPABILITIES = {
     title: "Lock and ring",
     detail: "lock the phone, ring it, keep its screen on",
   },
+  "phone.appearance": {
+    side: "phone",
+    risk: "low",
+    title: "The phone's light and dark",
+    detail: "switch the phone between light and dark mode",
+  },
   "phone.clipboard": {
     side: "phone",
     risk: "medium",
     title: "The phone's clipboard",
     detail: "read and set it",
+  },
+  "phone.share": {
+    side: "phone",
+    risk: "medium",
+    title: "Send files and links to the phone",
+    detail: "files land in Download/ekatva, links open, text on the clipboard",
   },
   "phone.journal": {
     side: "phone",

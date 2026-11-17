@@ -23,8 +23,24 @@ export const FileEntry = z.object({
 });
 export type FileEntry = z.infer<typeof FileEntry>;
 
+export const FilesOverview = z.object({
+  /** Bytes, of the file system holding the first shared folder. */
+  disk: z.object({ total: z.number(), free: z.number() }).nullable(),
+  /** The most recently changed files in the shared folders, newest first. */
+  recent: z.array(FileEntry),
+});
+export type FilesOverview = z.infer<typeof FilesOverview>;
+
 /** Up to this much per read or write call; larger files go in pieces. */
 export const CHUNK = 4 * 1024 * 1024;
+
+/**
+ * What senders put in each call: 512 KiB. A call's base64 passes through
+ * JSON, Noise frames and React Native's WebSocket (base64 again) on the
+ * phone's JS thread; a 4 MiB piece cost 30-40 MB of short-lived strings
+ * there. Receivers still accept up to CHUNK, for older senders.
+ */
+export const PIECE = 512 * 1024;
 
 /** The result of a change, with what the journal needs. */
 export interface Done<T> {
@@ -60,6 +76,8 @@ export interface FileService {
     a: FileAccess,
   ): Promise<Done<FileEntry>>;
   remove(path: string, a: FileAccess): Promise<Done<null>>;
+  /** Space and recently changed files, for the Files landing view (optional). */
+  overview?(a: FileAccess): Promise<FilesOverview>;
 }
 
 type Api<C extends BaseContext> = ReturnType<typeof createApi<C>>;
@@ -177,5 +195,13 @@ export function filesRouter<C extends BaseContext>(
           ),
         ),
       ),
+    overview: p.meta({ cap }).query(({ ctx }) =>
+      wrap(async (): Promise<FilesOverview> => {
+        const svc = service(ctx as unknown as C);
+        return svc.overview
+          ? svc.overview(access(ctx as unknown as C))
+          : { disk: null, recent: [] };
+      }),
+    ),
   });
 }

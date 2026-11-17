@@ -1,109 +1,81 @@
-import { router } from "expo-router";
 import { useState } from "react";
-import { View } from "react-native";
-import { strength } from "../core/vault";
-import { Button, Card, Field, Screen, T } from "../ui/kit";
+import { Pressable, View } from "react-native";
+import { SafeAreaView } from "react-native-safe-area-context";
+import { Brand, LockGlow, Shloka } from "../ui/brand";
+import { errorText } from "../ui/errors";
+import { Icon } from "../ui/icon";
+import { Txt } from "../ui/lac";
 import { useApp } from "../ui/state";
-import { c } from "../ui/theme";
+import { k } from "../ui/theme";
 
-const LABEL = ["too weak", "weak", "fair", "strong", "very strong"];
-const COLOR = [c.red, c.red, c.gold, c.teal, c.teal];
-
-/** First run: an app password, then the fingerprint (the keystore asks). */
+/** First run: this phone's keys, kept behind your fingerprint (the keystore asks). */
 export default function Setup() {
   const app = useApp();
-  const [pw, setPw] = useState("");
-  const [again, setAgain] = useState("");
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const st = strength(pw);
-  const ok = st.score >= 3 && pw === again;
 
   const go = async () => {
     setBusy(true);
     setError(null);
-    try {
-      await app.create(pw);
-      router.replace("/(tabs)");
-    } catch (e) {
-      setError((e as Error).message);
-    } finally {
-      setBusy(false);
-    }
+    await app
+      .create()
+      .catch((e: unknown) => setError(/cancel/i.test(errorText(e)) ? null : errorText(e)))
+      .finally(() => setBusy(false));
   };
 
   return (
-    <Screen>
-      <View style={{ gap: 6, marginTop: 40, marginBottom: 12 }}>
-        <T size={34} weight="800">
-          ekatva
-        </T>
-        <T size={16} color={c.dim}>
-          Your phone and your laptop as one device.
-        </T>
+    <SafeAreaView style={{ flex: 1, backgroundColor: k.ink }}>
+      <LockGlow />
+      <View style={{ flex: 1, paddingHorizontal: 30, justifyContent: "space-between" }}>
+        <View style={{ marginTop: 74 }}>
+          <Brand />
+        </View>
+        <View style={{ alignItems: "center" }}>
+          <Txt
+            size={13.5}
+            color={k.sub}
+            align="center"
+            style={{ lineHeight: 21, marginBottom: 22 }}
+          >
+            ekatva can reach your laptop's files, agents and more, so it opens only with your
+            fingerprint (or your phone's screen lock). Its keys never leave this phone's secure
+            hardware.
+          </Txt>
+          <Pressable
+            onPress={() => void go()}
+            disabled={busy}
+            style={({ pressed }) => ({
+              width: 84,
+              height: 84,
+              borderRadius: 99,
+              alignItems: "center",
+              justifyContent: "center",
+              borderWidth: 1,
+              borderColor: k.line2,
+              backgroundColor: pressed ? k.plum : "transparent",
+              marginBottom: 14,
+            })}
+            accessibilityRole="button"
+            accessibilityLabel="Set up with your fingerprint"
+          >
+            <Icon name="finger" size={40} color={k.brass2} />
+          </Pressable>
+          <Txt size={13} color={k.sub}>
+            {busy ? "Waiting for your fingerprint…" : "Touch to set up"}
+          </Txt>
+          <Txt size={12.5} color={k.mute} style={{ marginTop: 4 }}>
+            or use your phone's PIN
+          </Txt>
+          {error ? (
+            <Txt size={13} color={k.rose} align="center" style={{ marginTop: 12 }}>
+              {error}
+            </Txt>
+          ) : null}
+        </View>
+        <View style={{ marginBottom: 40 }}>
+          <Shloka />
+        </View>
       </View>
-      <Card>
-        <T weight="700" size={16}>
-          Protect the app
-        </T>
-        <T color={c.dim}>
-          ekatva can reach your laptop's files, agents and more, so it opens only with a strong
-          password and your fingerprint. The password never leaves this phone, and there's no way to
-          recover it: forgetting it means pairing again.
-        </T>
-        <Field
-          label="App password"
-          secureTextEntry
-          value={pw}
-          onChangeText={setPw}
-          autoCapitalize="none"
-          autoCorrect={false}
-          placeholder="At least 10 characters"
-        />
-        {pw ? (
-          <View style={{ gap: 6 }}>
-            <View style={{ flexDirection: "row", gap: 4 }}>
-              {[0, 1, 2, 3].map((i) => (
-                <View
-                  key={i}
-                  style={{
-                    flex: 1,
-                    height: 4,
-                    borderRadius: 2,
-                    backgroundColor: i < Math.max(1, st.score) ? COLOR[st.score] : c.muted,
-                  }}
-                />
-              ))}
-            </View>
-            <T size={12} color={COLOR[st.score]}>
-              {LABEL[st.score]}
-              {st.hint ? `: ${st.hint}` : ""}
-            </T>
-          </View>
-        ) : null}
-        <Field
-          label="Again"
-          secureTextEntry
-          value={again}
-          onChangeText={setAgain}
-          autoCapitalize="none"
-          autoCorrect={false}
-        />
-        {again && pw !== again ? (
-          <T size={12} color={c.red}>
-            The two don't match.
-          </T>
-        ) : null}
-        {error ? <T color={c.red}>{error}</T> : null}
-        <Button
-          label="Set up"
-          kind="primary"
-          icon="finger-print"
-          onPress={go}
-          busy={busy}
-          disabled={!ok}
-        />
-      </Card>
-    </Screen>
+    </SafeAreaView>
   );
 }

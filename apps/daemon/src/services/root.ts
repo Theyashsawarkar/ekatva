@@ -15,14 +15,35 @@
  * password passes through in memory only, once, and is never logged.
  */
 import { randomBytes } from "node:crypto";
-import { chmodSync, rmSync } from "node:fs";
+import { chmodSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { open as openFile } from "node:fs/promises";
 import { createServer, type Server, type Socket } from "node:net";
+import { homedir } from "node:os";
+import { join } from "node:path";
 import type { Done, RootRequest } from "@ekatva/protocol";
 import { TRPCError } from "@trpc/server";
 
 interface Pending extends RootRequest {
   socket: Socket;
+  /** The window's own id for it (dvarapala's), to find its result later. */
+  ext: string | null;
 }
+
+/** How a finished request ended, from dvarapala's log and what ekatva saw. */
+export interface RootHistoryEntry {
+  id: string;
+  requester: string;
+  reason: string;
+  at: number;
+  /** completed · denied · timeout · auth_failed · failed … (dvarapala's words) */
+  status: string;
+  /** Who answered it: this phone (through ekatva), or the laptop's window. */
+  where: "phone" | "laptop";
+  commands: { cmd: string; decision: string; state: string; exitCode: number | null }[];
+}
+
+/** dvarapala's log of every request and how it ended. */
+export const DVARAPALA_LOG = join(homedir(), ".local/state/dvarapala/requests.jsonl");
 
 const MAX_LINE = 256 * 1024;
 
@@ -36,7 +57,81 @@ export class RootBridge {
     private readonly log: (m: string) => void = () => undefined,
     /** Tell the phone something needs it, even with the app closed (a push). */
     private readonly onNew: (r: RootRequest) => void = () => undefined,
-  ) {}
+    /** Where ekatva remembers which requests a phone answered (null: in memory only). */
+    private readonly answersPath: string | null = null,
+    private readonly logPath: string = DVARAPALA_LOG,
+  ) {
+    try {
+      if (answersPath)
+        for (const [k, v] of Object.entries(JSON.parse(readFileSync(answersPath, "utf8"))))
+          this.answered.set(k, String(v));
+    } catch {
+      // none yet
+    }
+  }
+
+  /** dvarapala's id → what the phone answered. */
+  private answered = new Map<string, string>();
+
+  private remember(ext: string, answer: string): void {
+    this.answered.set(ext, answer);
+    while (this.answered.size > 300)
+      this.answered.delete(this.answered.keys().next().value as string);
+    if (!this.answersPath) return;
+    try {
+      writeFileSync(this.answersPath, JSON.stringify(Object.fromEntries(this.answered)), {
+        mode: 0o600,
+      });
+    } catch (e) {
+      this.log(`can't remember a root answer: ${(e as Error).message}`);
+    }
+  }
+
+  /** The latest finished requests, newest first (dvarapala's; pramana keeps none). */
+  async history(limit = 30): Promise<RootHistoryEntry[]> {
+    let text = "";
+    try {
+      const f = await openFile(this.logPath, "r");
+      try {
+        const size = (await f.stat()).size;
+        const want = Math.min(size, 512 * 1024);
+        const buf = Buffer.alloc(want);
+        await f.read(buf, 0, want, size - want);
+        text = buf.toString("utf8");
+      } finally {
+        await f.close();
+      }
+    } catch {
+      return [];
+    }
+    const out: RootHistoryEntry[] = [];
+    for (const line of text.split("\n").reverse()) {
+      if (out.length >= limit) break;
+      let e: Record<string, unknown>;
+      try {
+        e = JSON.parse(line);
+      } catch {
+        continue; // a cut-off first line, or noise
+      }
+      if (typeof e.id !== "string") continue;
+      const cmds = Array.isArray(e.commands) ? (e.commands as Record<string, unknown>[]) : [];
+      out.push({
+        id: e.id,
+        requester: String(e.requester ?? "unknown").slice(0, 200),
+        reason: String(e.reason ?? "").slice(0, 2000),
+        at: Math.round(Number(e.time ?? 0) * 1000),
+        status: String(e.status ?? "unknown"),
+        where: this.answered.has(e.id) ? "phone" : "laptop",
+        commands: cmds.slice(0, 64).map((c) => ({
+          cmd: String(c.cmd ?? ""),
+          decision: String(c.decision ?? ""),
+          state: String(c.state ?? ""),
+          exitCode: typeof c.exit_code === "number" ? c.exit_code : null,
+        })),
+      });
+    }
+    return out;
+  }
 
   async listen(): Promise<void> {
     rmSync(this.path, { force: true });
@@ -116,6 +211,7 @@ export class RootBridge {
       state: "waiting",
       attempts: 0,
       socket,
+      ext: typeof msg.id === "string" ? msg.id.slice(0, 100) : null,
     };
     this.pending.set(id, r);
     this.log(`root request from ${r.requester} (${r.via}): waiting on the laptop and the phone`);
@@ -136,12 +232,18 @@ export class RootBridge {
   }
 
   private view(p: Pending): RootRequest {
-    const { socket: _s, ...r } = p;
-    return { ...r, commands: r.commands.map((c) => ({ ...c })) };
+    const { socket: _s, ext, ...r } = p;
+    return { ...r, ref: ext, commands: r.commands.map((c) => ({ ...c })) };
   }
 
   list(): RootRequest[] {
     return [...this.pending.values()].map((p) => this.view(p));
+  }
+
+  /** Called with the waiting requests whenever they change; returns a function that stops it. */
+  watch(cb: (r: RootRequest[]) => void): () => void {
+    this.listeners.add(cb);
+    return () => this.listeners.delete(cb);
   }
 
   private emit(): void {
@@ -198,6 +300,7 @@ export class RootBridge {
       ...(approve ? { password } : {}),
     });
     r.socket.write(`${line}\n`);
+    if (r.ext) this.remember(r.ext, approve ? "approved" : "denied");
     if (approve) this.update(id, { state: "checking" });
     else this.remove(id);
     const what =

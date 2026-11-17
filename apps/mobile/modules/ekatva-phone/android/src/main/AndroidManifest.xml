@@ -9,8 +9,20 @@
   <uses-permission android:name="android.permission.RECEIVE_SMS" />
   <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
   <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
+  <!-- Calls and texts reach the laptop with the screen off: you allow it once (Settings, This phone). -->
+  <uses-permission android:name="android.permission.REQUEST_IGNORE_BATTERY_OPTIMIZATIONS" />
+  <uses-permission android:name="android.permission.WAKE_LOCK" />
   <uses-permission android:name="android.permission.FOREGROUND_SERVICE_CONNECTED_DEVICE" />
   <uses-permission android:name="android.permission.CHANGE_NETWORK_STATE" />
+  <!-- Hearing the laptop's beacon on the same network, also with the screen off. -->
+  <uses-permission android:name="android.permission.CHANGE_WIFI_MULTICAST_STATE" />
+  <uses-permission android:name="android.permission.ACCESS_WIFI_STATE" />
+  <!-- Find my phone: ring through Do Not Disturb (you allow it once), and vibrate. -->
+  <uses-permission android:name="android.permission.ACCESS_NOTIFICATION_POLICY" />
+  <uses-permission android:name="android.permission.VIBRATE" />
+  <!-- Light and dark from the laptop: a system setting, granted once over USB
+       (adb shell pm grant io.github.theyashsawarkar.ekatva android.permission.WRITE_SECURE_SETTINGS). -->
+  <uses-permission android:name="android.permission.WRITE_SECURE_SETTINGS" xmlns:tools="http://schemas.android.com/tools" tools:ignore="ProtectedPermissions" />
 
   <application>
     <!-- Locking the phone: you turn this on once, in the app's settings. -->
@@ -41,5 +53,18 @@
       android:name=".LinkService"
       android:exported="false"
       android:foregroundServiceType="connectedDevice" />
+    <!-- The "Stop ringing" button on the find-my-phone notification. -->
+    <receiver android:name=".RingStopReceiver" android:exported="false">
+      <intent-filter>
+        <action android:name="io.github.theyashsawarkar.ekatva.STOP_RINGING" />
+      </intent-filter>
+    </receiver>
+
+    <!-- A laptop notification swiped away on the phone. -->
+    <receiver android:name=".LaptopNotificationReceiver" android:exported="false">
+      <intent-filter>
+        <action android:name="io.github.theyashsawarkar.ekatva.LAPTOP_NOTIFICATION_DISMISSED" />
+      </intent-filter>
+    </receiver>
   </application>
 </manifest>

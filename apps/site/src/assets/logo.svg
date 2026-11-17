@@ -1,7 +1,7 @@
 <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64" fill="none" role="img" aria-label="ekatva">
   <title>ekatva</title>
-  <rect x="6" y="14" width="34" height="24" rx="4" stroke="#c4a7e7" stroke-width="4"/>
-  <path d="M2 44h42" stroke="#c4a7e7" stroke-width="4" stroke-linecap="round"/>
-  <rect x="38" y="22" width="20" height="34" rx="5" fill="#191724" stroke="#9ccfd8" stroke-width="4"/>
-  <circle cx="48" cy="49" r="2.4" fill="#9ccfd8"/>
+  <defs><mask id="cut"><rect width="64" height="64" fill="#fff"/><rect x="34" y="18" width="28" height="42" rx="8" fill="#000"/></mask></defs>
+    <g mask="url(#cut)"><rect x="6" y="14" width="34" height="24" rx="4" stroke="#e3cfa9" stroke-width="4"/><path d="M2 44h42" stroke="#e3cfa9" stroke-width="4" stroke-linecap="round"/></g>
+    <rect x="38" y="22" width="20" height="34" rx="5" stroke="#8ea8c6" stroke-width="4"/>
+    <circle cx="48" cy="49" r="2.4" fill="#8ea8c6"/>
 </svg>

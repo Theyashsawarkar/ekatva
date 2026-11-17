@@ -10,10 +10,11 @@ import { execFile } from "node:child_process";
 import { readFileSync, statSync } from "node:fs";
 import { readdir, stat } from "node:fs/promises";
 import { basename, join } from "node:path";
-import type { AgentSession, Done, Project } from "@ekatva/protocol";
+import type { AgentSession, AgentTranscript, Done, Project } from "@ekatva/protocol";
 import { TRPCError } from "@trpc/server";
 import { expand, home, tilde } from "../paths.js";
-import { readScreen } from "./agentScreen.js";
+import { backgroundAgents, readScreen } from "./agentScreen.js";
+import { transcript } from "./agentTranscript.js";
 
 const AGENTS = { claude: "claude", codex: "codex", aider: "aider", gemini: "gemini" } as const;
 type Kind = AgentSession["agent"];
@@ -75,7 +76,8 @@ export class AgentsService {
         command.toLowerCase().includes(AGENTS[k]),
       );
       if (!agent) continue;
-      const screen = readScreen(await this.capture(id, 60));
+      const capture = await this.capture(id, 60);
+      const screen = readScreen(capture);
       // The Stop hook marked it waiting: it finished its turn, your move.
       const state = screen.state === "idle" && wait ? "done" : screen.state;
       const prev = this.since.get(id);
@@ -90,6 +92,7 @@ export class AgentsService {
         question: screen.question,
         activity: screen.activity,
         since: this.since.get(id)?.at ?? this.now(),
+        background: backgroundAgents(capture),
       });
     }
     return sessions;
@@ -156,6 +159,12 @@ export class AgentsService {
   async tail(id: string, lines: number): Promise<string> {
     await this.find(id);
     return this.capture(id, lines);
+  }
+
+  /** The screen as a conversation, for reading on a phone. */
+  async transcript(id: string, lines: number): Promise<AgentTranscript> {
+    await this.find(id);
+    return transcript(await this.capture(id, lines));
   }
 
   async answer(id: string, option: string, questionHash: string): Promise<Done<null>> {
@@ -240,6 +249,7 @@ export class AgentsService {
       question: null,
       activity: "starting",
       since: this.now(),
+      background: [],
     };
     return { value: s, summary: `Started ${agent} in ${tilde(dir)} (session ${name})` };
   }

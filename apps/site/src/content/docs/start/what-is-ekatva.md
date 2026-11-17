@@ -19,9 +19,9 @@ a developer uses a laptop today:
 | Part | What it is |
 |---|---|
 | `ekatva` daemon | An always-on systemd user service on the laptop. It holds the link, serves the laptop's API to the phone, and keeps the action log. |
-| `ekatva` command | The CLI: pair, devices, grants, the log, undo, caffeine, status. |
-| Desktop window | An Electron app, a client of the daemon (closing it changes nothing). |
-| Phone app | React Native (Expo), protected by fingerprint and its own password. |
+| `ekatva` command | The CLI: pair, devices, grants, the log, undo, jyoti (keeping it awake), status. |
+| Laptop window | A [Vyom](https://github.com/Theyashsawarkar/vyom) popup ([ekatva-vyom](https://github.com/Theyashsawarkar/ekatva-vyom)), a client of the daemon that opens at once. |
+| Phone app | React Native (Expo), protected by your fingerprint (its keys in the Android keystore). |
 
 All of it is TypeScript in [one repository](https://github.com/Theyashsawarkar/ekatva),
 sharing one typed contract, so the phone and the laptop can't drift apart.
@@ -31,6 +31,6 @@ sharing one typed contract, so the phone and the laptop can't drift apart.
 :::note[Early development]
 Built and tested today: the encrypted link and pairing, the protocol (capabilities,
 tRPC both ways, the action log with undo), and the daemon (files with undo,
-caffeine and high caffeine, agents, the CLI). Being built: the phone app, the
+jyoti (Akhaṇḍa and Nandādīpa), agents, the CLI). Being built: the phone app, the
 desktop window, the tunnel. See the [changelog](/ekatva/reference/changelog/).
 :::

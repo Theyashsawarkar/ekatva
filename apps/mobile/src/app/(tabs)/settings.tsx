@@ -1,14 +1,11 @@
 import { CAPABILITIES, type Capability } from "@ekatva/protocol";
 import Constants from "expo-constants";
 import { router } from "expo-router";
-import { useState } from "react";
-import { Alert, Switch, View } from "react-native";
-import { Vault } from "../../core/vault";
-import { Button, Card, Field, Row, Screen, T } from "../../ui/kit";
-import { LinkChip } from "../../ui/link-chip";
+import { Alert, View } from "react-native";
+import { Glyph, H2, Item, List, Page, Toggle, Txt } from "../../ui/lac";
 import { PhoneFeatures } from "../../ui/phone-features";
-import { useApp, useLink } from "../../ui/state";
-import { c } from "../../ui/theme";
+import { useApp, useLaptop, useLink, usePoll } from "../../ui/state";
+import { k } from "../../ui/theme";
 
 const PHONE_CAPS = (Object.keys(CAPABILITIES) as Capability[]).filter(
   (k) => CAPABILITIES[k].side === "phone",
@@ -17,11 +14,8 @@ const PHONE_CAPS = (Object.keys(CAPABILITIES) as Capability[]).filter(
 export default function Settings() {
   const app = useApp();
   const { session } = app;
-  useLink();
-  const laptop = session?.laptops.current();
-  const [, bump] = useState(0);
-  const [pw, setPw] = useState<{ old: string; next: string } | null>(null);
-  const [msg, setMsg] = useState<string | null>(null);
+  const link = useLink();
+  const laptop = useLaptop();
 
   const toggle = async (cap: Capability, on: boolean) => {
     if (!laptop || !session) return;
@@ -42,7 +36,6 @@ export default function Settings() {
       input: { cap, on },
       ok: true,
     });
-    bump((n) => n + 1);
   };
 
   const forget = () =>
@@ -62,100 +55,112 @@ export default function Settings() {
       ],
     );
 
+  const via = link.status === "online" ? link.via : null;
+  const client = link.status === "online" ? session?.link.client : null;
+  const history = usePoll(() => client?.root.history.query() ?? null, [client], 60_000);
+  const today = new Date().toDateString();
+  const rootsToday = (history.data ?? []).filter(
+    (h) => new Date(h.at).toDateString() === today,
+  ).length;
+  const paired = laptop
+    ? new Date(laptop.pairedAt).toLocaleDateString([], { day: "numeric", month: "long" })
+    : "";
+  const state = via
+    ? `Connected ${via === "lan" ? "directly" : "from away"}, encrypted.`
+    : link.status === "connecting"
+      ? "Connecting…"
+      : "Not connected.";
+
   return (
-    <Screen title="Settings">
-      {laptop ? (
-        <Card>
-          <View style={{ flexDirection: "row", alignItems: "center" }}>
-            <T weight="800" size={17}>
-              {laptop.name}
-            </T>
-            <View style={{ flex: 1 }} />
-            <LinkChip />
-          </View>
-          <T size={12} color={c.subtle} mono>
-            key {laptop.key.slice(0, 4)} {laptop.key.slice(4, 8)} {laptop.key.slice(8, 12)} · paired{" "}
-            {new Date(laptop.pairedAt).toLocaleDateString()}
-          </T>
-          <T size={12} color={c.subtle}>
-            {laptop.lan.join(", ") || "no LAN address"}
-          </T>
-        </Card>
-      ) : null}
-      {laptop ? (
-        <Card>
-          <T weight="700">What {laptop.name} may do on this phone</T>
-          {PHONE_CAPS.map((cap) => (
-            <View
-              key={cap}
-              style={{ flexDirection: "row", alignItems: "center", gap: 10, paddingVertical: 4 }}
-            >
-              <View style={{ flex: 1 }}>
-                <T weight="600">{CAPABILITIES[cap].title}</T>
-                <T size={12} color={c.subtle}>
-                  {CAPABILITIES[cap].detail}
-                </T>
+    <Page title="Settings">
+      <List>
+        {laptop ? (
+          <Item
+            glyph={<Glyph name="laptop" size={48} radius={14} color={via ? k.steel : k.sub} />}
+            title={
+              <Txt w="600" size={18} lines={1}>
+                {laptop.name}
+              </Txt>
+            }
+            sub={
+              <View style={{ marginTop: 2, gap: 4 }}>
+                <Txt size={13} color={k.sub}>
+                  {state} Paired {paired}.
+                </Txt>
+                <Txt mono size={12} color={k.mute} label="The laptop's key, as paired">
+                  {laptop.key.slice(0, 4)} {laptop.key.slice(4, 8)} {laptop.key.slice(8, 12)}{" "}
+                  {laptop.key.slice(12, 16)}
+                </Txt>
               </View>
-              <Switch
-                value={laptop.grants.includes(cap)}
-                onValueChange={(v) => void toggle(cap, v)}
-                trackColor={{ true: c.accent, false: c.muted }}
-                thumbColor={c.text}
-              />
-            </View>
-          ))}
-        </Card>
+            }
+          />
+        ) : (
+          <Item
+            glyph={<Glyph name="qr" size={48} radius={14} color={k.brass2} />}
+            title="No laptop yet"
+            sub="Pair one to start"
+            chev
+            onPress={() => router.push("/pair")}
+          />
+        )}
+      </List>
+
+      {laptop ? (
+        <>
+          <H2>What {laptop.name} may do here</H2>
+          <List inset={16}>
+            {PHONE_CAPS.map((cap) => {
+              const on = laptop.grants.includes(cap);
+              return (
+                <Item
+                  key={cap}
+                  title={CAPABILITIES[cap].title}
+                  sub={CAPABILITIES[cap].detail}
+                  subLines={2}
+                  onPress={() => void toggle(cap, !on)}
+                  label={CAPABILITIES[cap].title}
+                  right={
+                    <Toggle
+                      on={on}
+                      onChange={(v) => void toggle(cap, v)}
+                      label={CAPABILITIES[cap].title}
+                    />
+                  }
+                />
+              );
+            })}
+          </List>
+        </>
       ) : null}
+
       <PhoneFeatures />
-      <Card style={{ padding: 4, gap: 0 }}>
-        <Row
-          icon="qr-code"
+
+      <H2>History</H2>
+      <List>
+        <Item
+          glyph="shield"
+          glyphColor={k.rose}
+          title="Root requests"
+          sub={history.data ? `${rootsToday} today` : undefined}
+          chev
+          onPress={() => router.push("/root-history")}
+        />
+        <Item glyph="list" title="Action log" chev onPress={() => router.push("/log")} />
+      </List>
+
+      <List inset={16} style={{ marginTop: 22 }}>
+        <Item
           title={laptop ? "Pair another laptop" : "Pair with a laptop"}
           onPress={() => router.push("/pair")}
         />
-        {laptop ? <Row icon="unlink" title={`Forget ${laptop.name}`} onPress={forget} /> : null}
-      </Card>
-      <Card style={{ padding: 4, gap: 0 }}>
-        <Row icon="lock-closed" title="Lock now" onPress={() => app.lock()} />
-        <Row
-          icon="key"
-          title="Change the app password"
-          onPress={() => setPw({ old: "", next: "" })}
-        />
-      </Card>
-      {pw ? (
-        <Card>
-          <Field
-            label="Current password"
-            secureTextEntry
-            value={pw.old}
-            onChangeText={(old) => setPw({ ...pw, old })}
-          />
-          <Field
-            label="New password"
-            secureTextEntry
-            value={pw.next}
-            onChangeText={(next) => setPw({ ...pw, next })}
-          />
-          <Button
-            label="Change"
-            kind="primary"
-            onPress={() =>
-              void Vault.changePassword(session!.platform.kv, pw.old, pw.next).then(
-                () => {
-                  setPw(null);
-                  setMsg("Password changed.");
-                },
-                (e: Error) => setMsg(e.message),
-              )
-            }
-          />
-        </Card>
-      ) : null}
-      {msg ? <T color={c.accent}>{msg}</T> : null}
-      <T size={12} color={c.subtle} style={{ textAlign: "center", marginTop: 8 }}>
-        ekatva {Constants.expoConfig?.version} · theyashsawarkar.github.io/ekatva
-      </T>
-    </Screen>
+        {laptop ? (
+          <Item title={`Forget ${laptop.name}`} titleColor={k.rose} onPress={forget} />
+        ) : null}
+        <Item title="Lock ekatva now" onPress={() => app.lock()} />
+      </List>
+      <Txt size={13} color={k.sub} align="center" style={{ marginTop: 26 }}>
+        ekatva {Constants.expoConfig?.version}
+      </Txt>
+    </Page>
   );
 }

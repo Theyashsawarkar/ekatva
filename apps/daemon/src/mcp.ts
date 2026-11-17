@@ -94,7 +94,7 @@ export async function serveMcp(agent = process.env.EKATVA_AGENT || "agent"): Pro
 
   tool(
     "status",
-    "The laptop (caffeine, agents waiting) and which phones are paired and online.",
+    "The laptop (jyoti, i.e. kept awake; agents waiting) and which phones are paired and online.",
     {},
     async () =>
       json({
@@ -187,14 +187,14 @@ export async function serveMcp(agent = process.env.EKATVA_AGENT || "agent"): Pro
   );
 
   tool(
-    "caffeine_set",
-    "Keep the laptop awake: off, on (no idle sleep), or high (also with the lid closed).",
+    "jyoti_set",
+    "Jyoti: keep the laptop awake: off (Śānta: as usual), on (Akhaṇḍa: no idle sleep), or high (Nandādīpa: also with the lid closed).",
     {
       level: z.enum(["off", "on", "high"]),
       minutes: z.number().int().min(1).max(10_080).optional().describe("then back to off"),
     },
     async ({ level, minutes }) =>
-      json(await api.caffeine.set.mutate({ level, minutes: minutes ?? null })),
+      json(await api.jyoti.set.mutate({ level, minutes: minutes ?? null })),
   );
   tool(
     "log_recent",

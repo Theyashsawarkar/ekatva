@@ -1,0 +1,10 @@
+[Desktop Entry]
+Type=Application
+Name=ekatva
+GenericName=Phone and laptop
+Comment=The phone at a glance: jyoti (keep awake), messages, calls, files, the action log, pairing
+Exec=ekatva window %U
+Icon=ekatva
+Terminal=false
+Categories=Utility;Network;
+Keywords=phone;pair;android;kde connect;

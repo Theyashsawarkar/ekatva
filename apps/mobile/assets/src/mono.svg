@@ -1,9 +1,9 @@
-<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1024 1024" role="img" aria-label="ekatva">
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1024 1024" fill="none" role="img" aria-label="ekatva">
   <title>ekatva</title>
-  <g transform="translate(287 249) scale(7.5)" fill="none">
-    <rect x="6" y="14" width="34" height="24" rx="4" stroke="#fff" stroke-width="4"/>
-    <path d="M2 44h42" stroke="#fff" stroke-width="4" stroke-linecap="round"/>
-    <rect x="38" y="22" width="20" height="34" rx="5" fill="none" stroke="#fff" stroke-width="4"/>
+  <g transform="translate(287 249) scale(7.5)">
+    <defs><mask id="cut"><rect width="64" height="64" fill="#fff"/><rect x="34" y="18" width="28" height="42" rx="8" fill="#000"/></mask></defs>
+    <g mask="url(#cut)"><rect x="6" y="14" width="34" height="24" rx="4" stroke="#fff" stroke-width="4"/><path d="M2 44h42" stroke="#fff" stroke-width="4" stroke-linecap="round"/></g>
+    <rect x="38" y="22" width="20" height="34" rx="5" stroke="#fff" stroke-width="4"/>
     <circle cx="48" cy="49" r="2.4" fill="#fff"/>
   </g>
 </svg>

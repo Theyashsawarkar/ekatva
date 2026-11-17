@@ -76,13 +76,19 @@ anything but ciphertext.
 - **Root, from your pocket.** When an agent needs `sudo` (through
   [dvarapala](https://github.com/Theyashsawarkar/dvarapala)) or an app needs
   admin rights (through [pramana](https://github.com/Theyashsawarkar/pramana)),
-  the request appears on the phone with exactly what will run. Approve it
-  with your fingerprint and type your password on the phone; it travels end
-  to end into that prompt and is never stored.
-- **Caffeine.** Keep the laptop awake from the phone, in two strengths:
-  - *Caffeine*: no dimming, no lock, no sleep while you're away from the keyboard.
-  - *High caffeine*: the same, and the laptop **keeps running with the lid
-    closed** (it still locks), for a long agent run in a bag.
+  the request appears on the phone (a notification) with exactly what will
+  run, at the same time as the window on the laptop: answer on either, the
+  first answer counts. Approve it with the laptop's own password, typed on
+  the phone; it travels end to end into that prompt and is never stored.
+- **Jyoti** (ज्योति, the flame). Keep the laptop awake from the phone. At
+  rest it's *Śānta* (शान्त: sleeps and locks as usual); lit, at two levels:
+  - *Akhaṇḍa* (the unbroken flame): no dimming, no lock, no sleep while
+    you're away from the keyboard.
+  - *Nandādīpa* (the lamp kept burning day and night): the same, and the
+    laptop **keeps running with the lid closed** (it still locks), for a long
+    agent run in a bag.
+  Lock and sleep from the phone still work while it's lit: sleep lets it go
+  for that one sleep, and it's lit again when the laptop wakes.
 - **Control.** The screen, live; a trackpad and a keyboard with Super and
   vim keys; windows and workspaces; launch apps; lock; sleep.
 - **Media.** [nāda](https://github.com/Theyashsawarkar/nada) and
@@ -103,7 +109,7 @@ anything but ciphertext.
 - **Notifications.** The phone's notifications on the desktop, with their
   actions; dismiss on one, gone on both.
 - **Lock the phone**, ring it, find it.
-- **Caffeine, the other way.** Keep the phone's screen on from the laptop.
+- **Jyoti, the other way.** Keep the phone's screen on from the laptop.
 - **The phone's files.** The same browse-and-edit, undoable, on the phone's
   storage.
 - **Battery and signal**, clipboard.
@@ -112,12 +118,16 @@ anything but ciphertext.
 
 - **Pair once.** The laptop shows a QR code; the phone scans it; both show
   the same four emoji; you confirm. From then on they recognise each other.
-- **Near or far.** On the same Wi-Fi they talk directly. Away, through a
+- **Near or far.** On the same network (a Wi-Fi, or the phone's own
+  hotspot, no internet needed) they find each other by an encrypted beacon
+  and talk directly; coming home moves the link off the tunnel by itself. Away, through a
   tunnel (Cloudflare quick tunnel by default; ngrok or Tailscale), started
   on demand. They find each other again by themselves; scanning a fresh QR
   always works too.
-- **Locked down.** The app opens only with your fingerprint and a strong
-  password. Risky actions (root, typing, the screen) ask for the fingerprint
+- **Locked down.** The app opens only with your fingerprint (or your
+  phone's screen lock): its keys are sealed in the Android keystore and
+  never leave its secure hardware. Root on the laptop takes the laptop's
+  own password. Risky actions (typing, the screen, deleting) ask for the fingerprint
   again. What a phone may do is chosen per capability on the laptop.
 - **Every action logged, everything undoable.** See
   [The action log](#the-action-log).
@@ -129,33 +139,34 @@ anything but ciphertext.
 
 ```
  Laptop                                          Phone
- ┌─────────────────────────────┐                 ┌───────────────────────────┐
+ ╭─────────────────────────────╮                 ╭───────────────────────────╮
  │ ekatva daemon (Node)        │  same Wi-Fi:    │ ekatva app (React Native) │
  │  tRPC server + client       │◀── direct ────▶│  tRPC client + server     │
  │  agents · desktop · media   │                 │  calls · SMS · notifs     │
- │  caffeine · files · root    │  away: tunnel   │  lock · files · approvals │
+ │  jyoti · files · root      │  away: tunnel   │  lock · files · approvals │
  │                             │◀── (ciphertext)▶│                           │
- ├─────────────────────────────┤                 └───────────────────────────┘
- │ Electron window (a client)  │        rendezvous: "where are you?"
+ ├─────────────────────────────┤                 ╰───────────────────────────╯
+ │ Vyom popup (a client)       │        rendezvous: "where are you?"
  │ waybar capsule · CLI        │        (ntfy topic, encrypted, no content)
- └─────────────────────────────┘
+ ╰─────────────────────────────╯
 ```
 
 - **One typed contract.** Both sides are TypeScript and share
   `packages/protocol`: the tRPC routers' types and zod schemas. The laptop
-  serves the main router (agents, desktop, caffeine…); the phone serves its
+  serves the main router (agents, desktop, jyoti…); the phone serves its
   own (calls, SMS, lock…). A renamed field breaks the build, not the phone.
 - **One encrypted socket.** A WebSocket carries a
   [Noise](https://noiseprotocol.org) session (the handshake WireGuard and
   WhatsApp use): both sides prove their long-term keys, then every frame is
   encrypted. tRPC runs inside it unaware; screen video and files are
   separate encrypted streams beside it.
-- **Found on the LAN** by mDNS (`_ekatva._tcp`); **from anywhere** through a
+- **Found on the LAN** by an encrypted UDP beacon only the paired phone can
+  read (no name or key in the clear, nothing to follow); **from anywhere** through a
   tunnel the daemon starts when the phone asks. The phone asks through a
   rendezvous (an [ntfy](https://ntfy.sh) topic) where the laptop posts its
   current address, encrypted to the phone's key.
 - **The daemon is always on**, a systemd user service (~40 MB). The
-  Electron window is only a client: closing it changes nothing.
+  window (a Vyom popup) is only a client: closing it changes nothing.
 - **Agents** come from tmux and Claude Code's hooks: the daemon reads a
   waiting session's question from its pane, and answers with
   `tmux send-keys` after checking the pane still shows that question.
@@ -192,7 +203,7 @@ takes to reverse it.
   contents, typed text and the clipboard by their length.
 - **Undo.** Deleting or overwriting a file first moves the old version to
   an undo store (kept 30 days or up to 5 GB, both configurable). A rename
-  remembers the old name, a volume change the old volume, caffeine its
+  remembers the old name, a volume change the old volume, jyoti its
   old level. `ekatva undo 42`, or one tap on the phone, puts it back. An
   undo is logged too, and can itself be undone. What can't be reversed
   (a call placed, an SMS sent, an answer given to Claude) is logged as
@@ -209,7 +220,7 @@ design, not a feature.
 |---|---|
 | finds the tunnel URL | A Noise handshake only a paired key completes; attempts are rate-limited and logged; the URL changes each time. |
 | photographs the QR | The token works once, for two minutes, and pairing needs matching emoji confirmed on the laptop. |
-| steals the phone | The app opens only with fingerprint and its own password; risky actions ask again; unpairing on the laptop revokes it at once. |
+| steals the phone | The app opens only with your fingerprint or the phone's screen lock (its keys are sealed in the Android keystore and never leave its secure hardware); root on the laptop also needs the laptop's password; risky actions ask again; unpairing on the laptop revokes it at once. |
 | runs the tunnel or the Wi-Fi | Sees ciphertext and sizes only: encryption is end to end. |
 | deletes or changes your files through the phone | Every change is in the action log on both devices and can be undone; the old version is in the undo store. |
 | edits the log to hide it | The hash chain breaks, and the other device's mirror disagrees. |
@@ -223,8 +234,8 @@ design, not a feature.
 - **No passwords on the wire**, except your sudo password when *you* choose
   to type it on the phone; it goes end to end into the prompt that asked,
   and is never logged or stored.
-- **Root from the phone is a capability you turn on**, per phone, with a
-  fingerprint on every use.
+- **Root from the phone is a capability you turn on**, per phone, and every
+  use takes the laptop's password.
 
 Found a hole? Please report it privately; see [SECURITY.md](SECURITY.md).
 
@@ -235,15 +246,16 @@ A [Turborepo](https://turbo.build) monorepo, TypeScript throughout:
 ```
 apps/
   daemon/      the laptop service (Node): tRPC server, link, capabilities; the `ekatva` CLI
-  desktop/     the laptop window (Electron + React)
   mobile/      the phone app (React Native, Expo)
   site/        the website and documentation (Astro + Starlight)
 packages/
   protocol/    the contract: tRPC routers' types and zod schemas, shared by all
   link/        Noise handshake, encrypted socket, pairing, QR payload
-  ui/          design tokens (rose-pine, follows varna) and shared React pieces
-  config/      tsconfig, eslint, prettier
+  config/      tsconfig
 ```
+
+The laptop's window is a [Vyom](https://github.com/Theyashsawarkar/vyom) popup in
+its own repo, [ekatva-vyom](https://github.com/Theyashsawarkar/ekatva-vyom).
 
 A few Android features have no JavaScript API (placing calls, SMS, the
 notification listener, locking the screen, a foreground service to stay
@@ -278,11 +290,11 @@ walks through one end to end.
 | Design | done |
 | Link: Noise, encrypted channel, pairing, emoji | done, tested |
 | Protocol: capabilities, tRPC both ways, action log, undo | done, tested |
-| Daemon: pairing, files with undo, caffeine, agents, the log, CLI | done, tested |
+| Daemon: pairing, files with undo, jyoti, agents, the log, CLI | done, tested |
 | From anywhere: tunnel and encrypted rendezvous | done, tested |
 | Media: players, volume, brightness | done, tested |
 | Screen and input | planned |
-| Desktop window (Electron) | done: phones, pairing, the logs, caffeine, the phone |
+| Laptop window ([Vyom popup](https://github.com/Theyashsawarkar/ekatva-vyom)) | done: the phone at a glance, messages, calls, files, the log, devices and pairing |
 | Website and documentation | done: [theyashsawarkar.github.io/ekatva](https://theyashsawarkar.github.io/ekatva/) |
 | Phone app | core done and tested against the daemon; screens done; first device build next |
 | Calls, SMS, notifications, lock (native module) | built; first device test next |
@@ -292,7 +304,7 @@ walks through one end to end.
 ## Roadmap
 
 1. **Link and agents**: pairing, LAN and tunnel, agent sessions (answer,
-   reply, new session), caffeine and high caffeine, files both ways with
+   reply, new session), jyoti (Akhaṇḍa and Nandādīpa), files both ways with
    undo, the action log on both devices, media, clipboard, battery, ring
    and lock.
 2. **Phone as a phone**: calls, SMS, notifications; remote control with

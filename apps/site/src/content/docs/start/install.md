@@ -25,22 +25,39 @@ systemctl --user enable --now ekatva
 ekatva status
 ```
 
-The window (pairing, your phones, the log, caffeine) goes in your app launcher
-with:
+The laptop's window is a [Vyom](https://github.com/Theyashsawarkar/vyom) popup,
+[ekatva-vyom](https://github.com/Theyashsawarkar/ekatva-vyom): clone it into
+`~/.local/share/vyom/plugins/ekatva` and restart Vyom
+(`systemctl --user restart vyom`). Open it with `vyom ekatva` or
+`ekatva window`; `ekatva window pair` opens straight on pairing, and
+`ekatva window calls` (messages, files, log, devices) on that place.
+`ekatva window` needs Vyom; the CLI does everything else without it.
+
+The daemon listens on port 47100 on your local network. Paired phones on the
+same network find it by its **beacon**: a small encrypted UDP message on port
+47101 that only they can read (see [On the same network](/ekatva/start/pairing/#on-the-same-network)).
+Nothing gets in without a paired key; see [the security model](/ekatva/security/model/).
+
+If a firewall drops incoming connections (ufw does by default), let local
+networks in, and only them. `ekatva status` and the window tell you when it's
+needed, with the command:
 
 ```sh
-cp apps/desktop/ekatva.desktop ~/.local/share/applications/
-install -Dm644 apps/mobile/assets/src/icon.svg ~/.local/share/icons/hicolor/scalable/apps/ekatva.svg
+sudo ufw allow from 10.0.0.0/8 to any port 47100 proto tcp comment 'ekatva LAN'
+sudo ufw allow from 172.16.0.0/12 to any port 47100 proto tcp comment 'ekatva LAN'
+sudo ufw allow from 192.168.0.0/16 to any port 47100 proto tcp comment 'ekatva LAN'
+sudo ufw allow from fe80::/10 to any port 47100 proto tcp comment 'ekatva LAN'
 ```
-
-Open it from the launcher or with `ekatva window`; `ekatva window pair` opens
-straight on pairing.
-
-The daemon listens on port 47100 on your local network and announces itself
-with mDNS, so the phone finds it. Nothing gets in without a paired key; see
-[the security model](/ekatva/security/model/).
 
 ## The phone
 
 The Android app is in `apps/mobile`. Until it's released, build it with
 `pnpm --filter mobile android` (needs the Android SDK).
+
+The first time it opens, the app makes this phone's keys and seals them
+with a key in the Android keystore that opens only right after your
+fingerprint, or your phone's own screen lock when the fingerprint won't do
+(Android's own prompt). There's no app password to remember, and adding a
+fingerprint changes nothing. Only removing the screen lock (or wiping the
+phone) loses the keys: the unlock screen then says so; choose *Start over*,
+run `ekatva unpair` for the old phone on the laptop, and pair again.

@@ -10,14 +10,18 @@ prompts (pramana) are next.
 
 When an agent needs root through [dvarapala](https://github.com/Theyashsawarkar/dvarapala),
 or an app asks for admin rights through [pramana](https://github.com/Theyashsawarkar/pramana)
-(polkit), the request appears on your phone with exactly what will run and why.
+(polkit), the request appears on your phone with exactly what will run and why:
+a notification that opens ekatva, at the same time as the window on the laptop.
+Answer on either one; the first answer counts, and the other closes.
 
-Approve it with your fingerprint and type your password on the phone. It goes
-end to end into that prompt, and nowhere else: it's never logged (the action
-log shows `[redacted]`) and never stored.
+Approve it with **the laptop's password** (your sudo password there), typed on
+the phone. It goes end to end into that prompt, and nowhere else: sudo on the
+laptop checks it, it's never logged (the action log shows `[redacted]`) and
+never stored. The phone's fingerprint opens ekatva; it never stands in for the
+laptop's password.
 
-This is the **root** capability: off unless you grant it, per phone, and the
-phone asks for your fingerprint every time.
+This is the **root** capability: off unless you grant it, per phone, and every
+use takes the laptop's password.
 
 ## How it stays safe
 

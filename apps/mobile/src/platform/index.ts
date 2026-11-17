@@ -1,5 +1,7 @@
 /** The real phone behind the core's interfaces: Expo's modules on Android. */
-import { Ntfy, webSocketTransport } from "@ekatva/link";
+
+import { BEACON_PORT, BEACON_SIZE, fromB64u, Ntfy, webSocketTransport } from "@ekatva/link";
+import { CHUNK, PIECE } from "@ekatva/protocol";
 import * as Battery from "expo-battery";
 import * as Clipboard from "expo-clipboard";
 import Constants from "expo-constants";
@@ -8,18 +10,22 @@ import { Directory, File, Paths } from "expo-file-system";
 import { activateKeepAwakeAsync, deactivateKeepAwake } from "expo-keep-awake";
 import * as Network from "expo-network";
 import * as SecureStore from "expo-secure-store";
-import { Vibration } from "react-native";
+import { AppState, Linking, Vibration } from "react-native";
 import { phone } from "../../modules/ekatva-phone";
+import { toB64 } from "../core/b64";
 
 /** The native module, when this build has it (a local const narrows in closures). */
 const native = phone;
 
+import { clip } from "../core/clip";
 import type { Fs, FsStat } from "../core/files";
 import type { KV } from "../core/kv";
 import type { Opener } from "../core/link";
 import type { Lines } from "../core/logStore";
 import type { DeviceApi } from "../core/services";
 import type { Platform } from "../core/session";
+import type { ShareHost } from "../core/share";
+import type { SecretBox } from "../core/vault";
 
 const VAULT = "ekatva.vault";
 
@@ -57,6 +63,37 @@ function lines(name: string): Lines {
       if (!file.exists) file.create();
       file.write(`${line}\n`, { append: true });
     },
+    async remove() {
+      if (file.exists) file.delete();
+    },
+    // The last `n` lines only, read backwards from the end (the log is ASCII:
+    // base64url lines), so unlocking never reads the whole history.
+    async tail(n) {
+      if (!file.exists) return [];
+      const h = file.open();
+      try {
+        let pos = h.size ?? 0;
+        let text = "";
+        let newlines = 0;
+        while (pos > 0 && newlines <= n) {
+          const len = Math.min(64 * 1024, pos);
+          pos -= len;
+          h.offset = pos;
+          const bytes = await h.readBytes(len);
+          let chunk = "";
+          for (let i = 0; i < bytes.length; i += 8192)
+            chunk += String.fromCharCode(...bytes.subarray(i, i + 8192));
+          for (let i = 0; i < chunk.length; i++) if (chunk.charCodeAt(i) === 10) newlines++;
+          text = chunk + text;
+        }
+        const lines = text.split("\n");
+        // Started mid-line: the first piece isn't a whole line.
+        if (pos > 0) lines.shift();
+        return lines.filter(Boolean).slice(-n);
+      } finally {
+        h.close();
+      }
+    },
   };
 }
 
@@ -72,6 +109,7 @@ const fs: Fs = {
   async list(dir) {
     return new Directory(uri(dir)).list().map((e) => e.name);
   },
+  ...(native ? { listDetailed: (dir: string) => native.listDir(dir) } : {}),
   async stat(p): Promise<FsStat | null> {
     const n = node(p);
     if (!n) return null;
@@ -82,10 +120,8 @@ const fs: Fs = {
     const h = new File(uri(p)).open();
     try {
       h.offset = offset;
-      const bytes = await h.readBytes(length);
-      let s = "";
-      for (const b of bytes) s += String.fromCharCode(b);
-      return btoa(s);
+      // At most a piece per call; the caller reads on until the end.
+      return toB64(await h.readBytes(Math.min(length, CHUNK)));
     } finally {
       h.close();
     }
@@ -99,9 +135,27 @@ const fs: Fs = {
     new File(uri(p)).write(data, { encoding: "base64", append: true });
   },
   async truncate(p, size) {
+    // Copies the part kept, a piece at a time, then swaps it in: never the
+    // whole file in memory (the file handle can't truncate).
     const f = new File(uri(p));
-    const keep = (await f.bytes()).slice(0, size);
-    f.write(keep);
+    const tmp = new File(`${uri(p)}.ekatva-truncate`);
+    if (tmp.exists) tmp.delete();
+    tmp.create();
+    const from = f.open();
+    const to = tmp.open();
+    try {
+      for (let left = size; left > 0; ) {
+        const bytes = await from.readBytes(Math.min(left, PIECE));
+        if (!bytes.length) break;
+        await to.writeBytes(bytes);
+        left -= bytes.length;
+      }
+    } finally {
+      from.close();
+      to.close();
+    }
+    f.delete();
+    tmp.move(new File(uri(p)));
   },
   async mkdir(p) {
     const d = new Directory(uri(p));
@@ -130,6 +184,7 @@ const callsOf = (n: Native): DeviceApi["calls"] => ({
   dial: async (num) => n.dial(num),
   answer: async () => n.answer(),
   hangUp: async () => n.hangUp(),
+  log: async (limit) => n.callLog(limit),
 });
 const smsOf = (n: Native): DeviceApi["sms"] => ({
   threads: async () => n.smsThreads(50),
@@ -167,11 +222,16 @@ const device: DeviceApi = {
   async locked() {
     return null;
   },
-  async ring() {
-    Vibration.vibrate([0, 600, 300, 600, 300, 600, 300, 1200]);
-    // Rings even on silent: that's the point of "find my phone".
-    native?.ring(20);
+  async ring(from) {
+    // Until stopped, at full volume, through silent and Do Not Disturb (Ring.kt).
+    if (native) native.ring(from);
+    else Vibration.vibrate([0, 600, 300, 600, 300, 600, 300, 1200]);
   },
+  async stopRinging() {
+    native?.stopRinging();
+    Vibration.cancel();
+  },
+  ringing: () => native?.ringing() ?? false,
   async keepAwake(on) {
     if (on) await activateKeepAwakeAsync("ekatva");
     else deactivateKeepAwake("ekatva");
@@ -180,11 +240,78 @@ const device: DeviceApi = {
   awake: () => awake,
   clipboardGet: () => Clipboard.getStringAsync(),
   async clipboardSet(text) {
+    // From the laptop: not news to send back to it.
+    clip.heard = text;
     await Clipboard.setStringAsync(text);
   },
   lock: native ? lockOf(native) : null,
+  appearance: native
+    ? {
+        get: async () => native.appearance(),
+        set: (mode) => native.setAppearance(mode === "dark"),
+      }
+    : null,
   calls: native ? callsOf(native) : null,
   sms: native ? smsOf(native) : null,
+  notifications: native
+    ? {
+        dismiss: async (id) => native.dismissNotification(id),
+        act: async (id, index, reply) => native.notificationAction(id, index, reply),
+        show: async (n) =>
+          native.showLaptopNotification(
+            n.id,
+            n.app,
+            n.title,
+            n.text,
+            n.icon ?? null,
+            n.picture ?? null,
+            n.urgency ?? null,
+          ),
+        close: async (id) => native.closeLaptopNotification(id),
+      }
+    : null,
+};
+
+/** The vault's box: the keystore key behind the fingerprint or the screen lock (VaultKey.kt). */
+const box: SecretBox | undefined = native
+  ? {
+      exists: async () => native.vaultExists(),
+      seal: (text) => native.vaultSeal(text, "Protect ekatva"),
+      open: () => native.vaultOpen("Unlock ekatva"),
+      wipe: async () => native.vaultWipe(),
+    }
+  : undefined;
+
+/** Where files from the laptop go: Download/ekatva when all files are allowed, else the app's folder. */
+async function shareDir(): Promise<string> {
+  const [root] = await roots();
+  return root === "/storage/emulated/0" ? `${root}/Download/ekatva` : `${root}/From laptop`;
+}
+
+let shareNote = 0;
+const shareHost: ShareHost = {
+  dir: shareDir,
+  async openUrl(url) {
+    await Linking.openURL(url);
+  },
+  async setClipboard(text) {
+    await Clipboard.setStringAsync(text);
+  },
+  notify(title, text) {
+    try {
+      native?.showLaptopNotification(
+        `share-${shareNote++}`,
+        "ekatva",
+        title,
+        text,
+        null,
+        null,
+        null,
+      );
+    } catch {
+      // notifications not allowed: the file is there all the same
+    }
+  },
 };
 
 const open: Opener = (url, timeoutMs) =>
@@ -204,16 +331,59 @@ const open: Opener = (url, timeoutMs) =>
     });
   });
 
-/** Shared storage when "All files access" is allowed, else the app's own Shared folder. */
+/** The laptop's beacons on this network, from the native module (none in Expo Go). */
+const beacons: Platform["beacons"] = native
+  ? (cb) => {
+      const sub = native.addListener("onBeacon", (e) => {
+        try {
+          cb(e.from, fromB64u(e.data));
+        } catch {
+          // not base64url: not ours
+        }
+      });
+      try {
+        native.listenBeacons(BEACON_PORT, BEACON_SIZE);
+      } catch (e) {
+        console.info(`[ekatva link] can't listen for the laptop's beacon: ${(e as Error).message}`);
+      }
+      return () => {
+        sub.remove();
+        native.stopBeacons();
+      };
+    }
+  : undefined;
+
+/** The answer, until the app comes back to the front (the grant may have changed meanwhile). */
+let rootsCache: string[] | null = null;
+AppState.addEventListener("change", (st) => {
+  if (st === "active") rootsCache = null;
+});
+
+/**
+ * Shared storage when "All files access" is allowed, else the app's own Shared
+ * folder. Asks Android (isExternalStorageManager, through the module's status)
+ * instead of listing the whole storage root to find out.
+ */
 async function roots(): Promise<string[]> {
+  if (rootsCache) return rootsCache;
+  let all = false;
   try {
-    new Directory("file:///storage/emulated/0").list();
-    return ["/storage/emulated/0"];
+    if (phone) all = phone.status().allFiles;
+    else {
+      // Expo Go (no module): listing it only works with the access.
+      new Directory("file:///storage/emulated/0").list();
+      all = true;
+    }
   } catch {
+    all = false;
+  }
+  if (all) rootsCache = ["/storage/emulated/0"];
+  else {
     const own = new Directory(Paths.document, "Shared");
     if (!own.exists) own.create({ intermediates: true });
-    return [own.uri.replace(/^file:\/\//, "").replace(/\/$/, "")];
+    rootsCache = [own.uri.replace(/^file:\/\//, "").replace(/\/$/, "")];
   }
+  return rootsCache;
 }
 
 export function platform(onAlert: (m: string) => void): Platform {
@@ -231,6 +401,19 @@ export function platform(onAlert: (m: string) => void): Platform {
       model: Device.modelName ?? "",
     },
     onAlert,
+    shareHost,
+    ...(box ? { box } : {}),
     ntfy: new Ntfy(),
+    ...(beacons ? { beacons } : {}),
+    online: async () => {
+      const n = await Network.getNetworkStateAsync();
+      return n.isConnected !== false;
+    },
+    async wipeFiles() {
+      for (const name of ["logs", "undo"]) {
+        const d = new Directory(Paths.document, name);
+        if (d.exists) d.delete();
+      }
+    },
   };
 }

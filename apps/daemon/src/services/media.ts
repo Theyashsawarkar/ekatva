@@ -4,21 +4,38 @@
  * wpctl (PipeWire), the backlight through brightnessctl. Missing tools just
  * leave their part empty.
  */
+
 import { execFile } from "node:child_process";
+import { createHash } from "node:crypto";
 import { readFile, stat } from "node:fs/promises";
 import { fileURLToPath } from "node:url";
 import type { Done, Media, MediaAction, Player } from "@ekatva/protocol";
 import { TRPCError } from "@trpc/server";
+import { mpdQueue, type Queue } from "./mpd.js";
 
 export interface MediaHost {
   /** Runs a command; resolves with its exit code and output. */
   run(cmd: string, args: string[]): Promise<{ code: number; out: string }>;
   /** A local file's bytes, for album art; null when it's missing or too big. */
   art(path: string): Promise<Buffer | null>;
+  /**
+   * A cover scaled down for the phone (a local path or an https URL): a small
+   * JPEG, or null when it can't be made (then the original is used).
+   */
+  cover?(source: string): Promise<Buffer | null>;
+  /** An https cover's bytes (capped), when it can't be scaled. */
+  fetchArt?(url: string): Promise<Buffer | null>;
   now(): number;
+  /** The songs either side of the current one, for players that play through MPD (nāda). */
+  queue?(): Promise<Queue | null>;
 }
 
+/** Players whose queue is MPD's. */
+const MPD_PLAYERS = new Set(["nada", "mpd"]);
+
 const ART_MAX = 256 * 1024;
+/** Covers are scaled to this width for the phone. */
+export const COVER_PX = 192;
 
 export const realMediaHost: MediaHost = {
   run: (cmd, args) =>
@@ -41,6 +58,44 @@ export const realMediaHost: MediaHost = {
     }
   },
   now: () => Date.now(),
+  queue: () => mpdQueue().catch(() => null),
+  // ffmpeg reads files and https alike; 192 px wide is plenty for a 64 dp label at 3x.
+  cover: (source) =>
+    new Promise((resolve) => {
+      execFile(
+        "ffmpeg",
+        [
+          "-v",
+          "error",
+          "-nostdin",
+          "-i",
+          source,
+          "-vf",
+          `scale='min(${COVER_PX},iw)':-2`,
+          "-frames:v",
+          "1",
+          "-f",
+          "image2pipe",
+          "-vcodec",
+          "mjpeg",
+          "-q:v",
+          "5",
+          "-",
+        ],
+        { encoding: "buffer", timeout: 8_000, maxBuffer: ART_MAX },
+        (err, stdout) => resolve(err || !stdout?.length ? null : (stdout as Buffer)),
+      );
+    }),
+  fetchArt: async (url) => {
+    try {
+      const r = await fetch(url, { signal: AbortSignal.timeout(6_000) });
+      if (!r.ok) return null;
+      const b = Buffer.from(await r.arrayBuffer());
+      return b.length <= ART_MAX ? b : null;
+    } catch {
+      return null;
+    }
+  },
 };
 
 const NAMES: Record<string, string> = {
@@ -81,7 +136,9 @@ function clock(ms: number): string {
 }
 
 export class MediaService {
-  private art = new Map<string, string | null>();
+  /** Covers by id: where each lives, and the ones read already. */
+  private artUrls = new Map<string, string>();
+  private art_ = new Map<string, string | null>();
   private listeners = new Set<(m: Media) => void>();
   private timer: ReturnType<typeof setInterval> | null = null;
   private last = "";
@@ -114,36 +171,63 @@ export class MediaService {
         title: title ?? "",
         artist: artist ?? "",
         album: album ?? "",
-        art: await this.artOf(artUrl ?? ""),
+        artId: this.artIdOf(artUrl ?? ""),
         length: us(length),
         position: us(position),
         at: this.host.now(),
+        ...(MPD_PLAYERS.has(base) && this.host.queue
+          ? ((await this.host.queue()) ?? { prev: null, next: null })
+          : {}),
       });
     }
     // The playing one first; otherwise playerctl's order.
     return out.sort((a, b) => Number(b.status === "Playing") - Number(a.status === "Playing"));
   }
 
-  private async artOf(url: string): Promise<string | null> {
-    if (/^https?:\/\//.test(url)) return url;
-    if (!url.startsWith("file://")) return null;
-    if (this.art.has(url)) return this.art.get(url) ?? null;
-    let path: string;
-    try {
-      path = fileURLToPath(url);
-    } catch {
-      return null;
+  /** A cover's id: a short hash of where it lives; the bytes are fetched apart (art()). */
+  private artIdOf(url: string): string | null {
+    if (!/^https?:\/\//.test(url) && !url.startsWith("file://")) return null;
+    const id = createHash("sha256").update(url).digest("base64url").slice(0, 16);
+    if (this.artUrls.size > 64) this.artUrls.clear();
+    this.artUrls.set(id, url);
+    return id;
+  }
+
+  /**
+   * A cover by id, always as a small data: URL the phone shows as is (never a
+   * URL it would fetch itself, in the clear): scaled to 192 px when ffmpeg can,
+   * else the original (at most 256 KB). Kept, at most 32.
+   */
+  async art(id: string): Promise<string | null> {
+    const url = this.artUrls.get(id);
+    if (!url) return null;
+    if (this.art_.has(id)) return this.art_.get(id) ?? null;
+    let source: string;
+    const remote = /^https?:\/\//.test(url);
+    if (remote) source = url;
+    else {
+      try {
+        source = fileURLToPath(url);
+      } catch {
+        return null;
+      }
     }
-    const bytes = await this.host.art(path);
-    const mime =
-      bytes?.[0] === 0x89
-        ? "image/png"
-        : bytes?.subarray(0, 4).toString() === "RIFF"
-          ? "image/webp"
-          : "image/jpeg";
+    let bytes = (await this.host.cover?.(source).catch(() => null)) ?? null;
+    let mime = "image/jpeg";
+    if (!bytes) {
+      bytes = remote
+        ? ((await this.host.fetchArt?.(url).catch(() => null)) ?? null)
+        : await this.host.art(source);
+      mime =
+        bytes?.[0] === 0x89
+          ? "image/png"
+          : bytes?.subarray(0, 4).toString() === "RIFF"
+            ? "image/webp"
+            : "image/jpeg";
+    }
     const value = bytes ? `data:${mime};base64,${bytes.toString("base64")}` : null;
-    if (this.art.size > 32) this.art.clear();
-    this.art.set(url, value);
+    if (this.art_.size > 32) this.art_.clear();
+    this.art_.set(id, value);
     return value;
   }
 

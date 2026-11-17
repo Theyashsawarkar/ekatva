@@ -66,12 +66,15 @@ describe("finding the laptop from elsewhere", () => {
       socketPath: join(root, "ekatva.sock"),
       port: 0,
       host: "127.0.0.1",
-      mdns: false,
+      beacon: false,
+      checkFirewall: false,
+      desktopNotifications: false,
       lan: (port) => [`127.0.0.1:${port}`],
       rendezvousEveryMs: 300,
-      caffeineHost: {
+      jyotiHost: {
         run: async () => ({ code: 0, out: "" }),
-        hold: () => ({ stop() {}, onExit() {} }),
+        hold: () => ({ stop: async () => undefined, onExit() {} }),
+        lock: async () => undefined,
         lidClosed: () => null,
         battery: () => null,
         now: Date.now,
@@ -87,6 +90,9 @@ describe("finding the laptop from elsewhere", () => {
       signal: async () => null,
       locked: async () => null,
       ring: async () => {},
+      stopRinging: async () => {},
+      ringing: () => false,
+      notifications: null,
       keepAwake: async () => {},
       awake: () => false,
       clipboardGet: async () => "",
@@ -125,7 +131,7 @@ describe("finding the laptop from elsewhere", () => {
       info: {},
       ntfy: new Ntfy(ntfy.url),
     };
-    phone = await Session.create(p, "correct horse battery 9!", 2 ** 10);
+    phone = await Session.create(p);
     ws = createWSClient({
       url: `ws+unix://${join(root, "ekatva.sock")}:/`,
       WebSocket: WebSocket as never,

@@ -1,10 +1,18 @@
+/** Start Claude (or Codex) in one of your projects, with a first prompt: a sheet. */
 import { router } from "expo-router";
 import { useState } from "react";
-import { Button, Card, Field, Row, Screen, T } from "../ui/kit";
+import { Pressable, TextInput, View } from "react-native";
+import { errorText } from "../ui/errors";
+import { Icon } from "../ui/icon";
+import { Btn, Item, List, Sheet, Txt } from "../ui/lac";
 import { useApp, useLink, usePoll } from "../ui/state";
-import { c } from "../ui/theme";
+import { font, k } from "../ui/theme";
 
-/** Start Claude (or Codex) in one of your projects, with a first prompt. */
+const AGENTS = [
+  { value: "claude", label: "Claude Code" },
+  { value: "codex", label: "Codex" },
+] as const;
+
 export default function NewSession() {
   const { session } = useApp();
   const link = useLink();
@@ -20,59 +28,121 @@ export default function NewSession() {
     if (!client || !project) return;
     setBusy(true);
     setError(null);
-    try {
-      const s = await client.agents.start.mutate({ project, prompt: prompt.trim() || null, agent });
-      router.replace({ pathname: "/agent/[id]", params: { id: s.id } });
-    } catch (e) {
-      setError((e as Error).message);
-      setBusy(false);
-    }
+    const first = prompt.trim();
+    await client.agents.start
+      .mutate({ project, prompt: first ? first : null, agent })
+      .then((s) => router.replace({ pathname: "/agent/[id]", params: { id: s.id } }))
+      .catch((e: unknown) => {
+        setError(errorText(e));
+        setBusy(false);
+      });
   };
 
   return (
-    <Screen title="New session" right={<Button label="Close" onPress={() => router.back()} />}>
-      <Card>
-        <T weight="700">Agent</T>
-        <Row
-          title="Claude Code"
-          icon={agent === "claude" ? "radio-button-on" : "radio-button-off"}
-          onPress={() => setAgent("claude")}
-        />
-        <Row
-          title="Codex"
-          icon={agent === "codex" ? "radio-button-on" : "radio-button-off"}
-          onPress={() => setAgent("codex")}
-        />
-      </Card>
-      <Card>
-        <T weight="700">Project</T>
-        {projects.error ? <T color={c.red}>{projects.error}</T> : null}
-        {(projects.data ?? []).slice(0, 30).map((p) => (
-          <Row
-            key={p.path}
-            title={p.name}
-            detail={p.path}
-            icon={project === p.path ? "radio-button-on" : "folder-outline"}
-            onPress={() => setProject(p.path)}
-          />
+    <Sheet title="New session">
+      {/* Which agent: a two-way switch. */}
+      <View
+        accessibilityRole="radiogroup"
+        style={{
+          flexDirection: "row",
+          borderWidth: 1,
+          borderColor: k.line,
+          borderRadius: 14,
+          padding: 3,
+          marginBottom: 16,
+          backgroundColor: k.ink,
+        }}
+      >
+        {AGENTS.map((o) => (
+          <Pressable
+            key={o.value}
+            onPress={() => setAgent(o.value)}
+            accessibilityRole="radio"
+            accessibilityState={{ checked: agent === o.value }}
+            style={{
+              flex: 1,
+              alignItems: "center",
+              paddingVertical: 8,
+              borderRadius: 11,
+              backgroundColor: agent === o.value ? k.plum2 : "transparent",
+            }}
+          >
+            <Txt w="600" size={14} color={agent === o.value ? k.text : k.sub}>
+              {o.label}
+            </Txt>
+          </Pressable>
         ))}
-      </Card>
-      <Field
-        label="First prompt (optional)"
+      </View>
+
+      <Txt size={13} color={k.sub} style={{ marginBottom: 8 }}>
+        Project
+      </Txt>
+      {projects.error ? (
+        <Txt size={13.5} color={k.rose} style={{ marginBottom: 8 }}>
+          {projects.error}
+        </Txt>
+      ) : null}
+      {projects.data ? (
+        <List style={{ backgroundColor: k.ink }}>
+          {projects.data.slice(0, 30).map((p) => (
+            <Item
+              key={p.path}
+              glyph="folder"
+              glyphColor={project === p.path ? k.brass2 : k.text}
+              title={p.name}
+              sub={p.path}
+              right={
+                project === p.path ? <Icon name="check" size={20} color={k.brass2} /> : undefined
+              }
+              onPress={() => setProject(p.path)}
+              label={`${p.name}${project === p.path ? ", chosen" : ""}`}
+            />
+          ))}
+        </List>
+      ) : (
+        <Txt size={13.5} color={k.mute}>
+          Reading your projects…
+        </Txt>
+      )}
+
+      <Txt size={13} color={k.sub} style={{ marginTop: 16, marginBottom: 8 }}>
+        First prompt (optional)
+      </Txt>
+      <TextInput
         value={prompt}
         onChangeText={setPrompt}
         multiline
         placeholder="Fix the failing tests in src/api"
+        placeholderTextColor={k.mute}
+        accessibilityLabel="First prompt"
+        style={{
+          minHeight: 72,
+          maxHeight: 160,
+          backgroundColor: k.ink,
+          borderWidth: 1,
+          borderColor: k.line2,
+          borderRadius: 14,
+          paddingHorizontal: 14,
+          paddingVertical: 12,
+          color: k.text,
+          fontFamily: font.body,
+          fontSize: 15,
+          textAlignVertical: "top",
+        }}
       />
-      {error ? <T color={c.red}>{error}</T> : null}
-      <Button
+      {error ? (
+        <Txt size={13.5} color={k.rose} style={{ marginTop: 10 }}>
+          {error}
+        </Txt>
+      ) : null}
+      <Btn
         label="Start"
-        kind="primary"
+        kind="solid"
         icon="play"
         busy={busy}
-        disabled={!project}
+        disabled={!project || !client}
         onPress={start}
       />
-    </Screen>
+    </Sheet>
   );
 }

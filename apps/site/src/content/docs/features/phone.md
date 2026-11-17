@@ -8,8 +8,10 @@ Built into the Android app (a small native module); each needs your permission
 once, in the app's **Settings → Phone features**.
 :::
 
-- **Calls**: dial from the laptop, see incoming calls (a desktop notification
-  with Answer and Reject), hang up.
+- **Calls**: dial from the laptop; an incoming call shows at the top of the
+  laptop's window with Answer and Decline (and as a desktop notification), a
+  call in progress with its timer and Hang up; the call history, read when you
+  look at it (and written to the phone's log when it is).
 - **Messages**: read conversations and reply.
 - **Notifications**: the phone's, on your desktop; dismiss on one, gone on both.
 - **Lock the phone**, ring it to find it, keep its screen on.

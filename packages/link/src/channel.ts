@@ -123,13 +123,22 @@ export class Channel {
   ) {
     t.onMessage((d) => this.receive(d));
     t.onClose((code, reason) => this.finish(reason || `closed (${code})`));
-    const every = opts.keepaliveMs ?? 20_000;
-    if (every > 0) {
-      this.keepalive = setInterval(() => {
-        if (Date.now() - this.lastSeen > every * 3) this.close("timed out", CLOSE.timeout);
-        else this.control({ t: "ping" });
-      }, every);
-    }
+    this.setKeepalive(opts.keepaliveMs ?? 20_000);
+  }
+
+  /**
+   * Pings every `ms` (0: never) and closes as "timed out" after three silent
+   * ones. Changeable while open: a phone pings often in front, rarely in the
+   * background, to let its radio sleep.
+   */
+  setKeepalive(ms: number): void {
+    if (this.keepalive) clearInterval(this.keepalive);
+    this.keepalive = null;
+    if (ms <= 0 || this.closed) return;
+    this.keepalive = setInterval(() => {
+      if (Date.now() - this.lastSeen > ms * 3) this.close("timed out", CLOSE.timeout);
+      else this.control({ t: "ping" });
+    }, ms);
   }
 
   get remoteStatic(): Uint8Array {
