@@ -47,7 +47,13 @@ anything but ciphertext.
 <p align="center">
   <img alt="Darpaṇa, ekatva's laptop window: the phone's battery and actions, Jyoti, light and dark, the clipboard, the latest messages and calls" src="apps/site/src/assets/screens/home.png" width="100%">
 </p>
-<p align="center"><sub>The laptop's window, Darpaṇa, with a made-up phone and made-up people.</sub></p>
+<p align="center">
+  <img alt="The phone app's Home: the laptop's battery, a song playing, Jyoti, volume and brightness" src="apps/site/src/assets/screens/phone-home.png" width="24%">
+  <img alt="Agents: one asking to run the tests with its options, one working, one finished" src="apps/site/src/assets/screens/phone-agents.png" width="24%">
+  <img alt="An agent's conversation: what it said and the files it read and changed" src="apps/site/src/assets/screens/phone-agent.png" width="24%">
+  <img alt="The laptop's files from the phone" src="apps/site/src/assets/screens/phone-files.png" width="24%">
+</p>
+<p align="center"><sub>The laptop's window, Darpaṇa, and the phone app, with a made-up laptop, phone, people and projects.</sub></p>
 
 ## Contents
 

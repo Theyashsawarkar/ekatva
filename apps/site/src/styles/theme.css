@@ -71,3 +71,7 @@
   font-size: var(--sl-text-sm);
   color: var(--sl-color-gray-3);
 }
+
+.shots-phone {
+  grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
+}

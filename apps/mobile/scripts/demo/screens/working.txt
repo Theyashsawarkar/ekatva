@@ -1,0 +1,14 @@
+● I'll add the missing tests for the checkout total first.
+
+● Read(src/checkout/total.ts)
+  ⎿  Read 84 lines
+
+● Update(src/checkout/total.test.ts)
+  ⎿  Added 3 tests: discounts, free shipping, rounding
+
+✽ Writing tests… (2m 14s · ↓ 8.2k tokens)
+
+──────────────────────────────────────────────────────────────────────────────
+❯ 
+──────────────────────────────────────────────────────────────────────────────
+  ⏵⏵ accept edits on (shift+tab to cycle) · esc to interrupt

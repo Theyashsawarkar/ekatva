@@ -1,0 +1,10 @@
+● The blog now builds its RSS feed from the posts' front matter.
+
+  - feed.xml lists the latest 20 posts, newest first
+  - each item has its title, date, summary and link
+  - pnpm build passes; the feed validates
+
+──────────────────────────────────────────────────────────────────────────────
+❯ 
+──────────────────────────────────────────────────────────────────────────────
+  ? for shortcuts
