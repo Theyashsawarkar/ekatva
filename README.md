@@ -44,6 +44,11 @@ anything but ciphertext.
 > ekatva is in early development. This README describes the whole design;
 > [Status](#status) says what works today.
 
+<p align="center">
+  <img alt="Darpaṇa, ekatva's laptop window: the phone's battery and actions, Jyoti, light and dark, the clipboard, the latest messages and calls" src="apps/site/src/assets/screens/home.png" width="100%">
+</p>
+<p align="center"><sub>The laptop's window, Darpaṇa, with a made-up phone and made-up people.</sub></p>
+
 ## Contents
 
 - [Features](#features)

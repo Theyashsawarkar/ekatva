@@ -44,6 +44,24 @@ import { Card, CardGrid, LinkCard } from "@astrojs/starlight/components";
   </Card>
 </CardGrid>
 
+## On the laptop: Darpaṇa
+
+The laptop's window is [Darpaṇa](https://theyashsawarkar.github.io/darpana/) (दर्पण, the mirror), a Vyom popup on `Super+o`: the phone at a glance, Jyoti, messages and calls with search, and the phone's files both ways. Incoming calls ring on the laptop's own notifications, with Answer and Reject, even with the phone in another room.
+
+![Darpaṇa's Home: the phone's battery and signal with Ring, Lock, Awake, Send and Dial, Jyoti at Akhaṇḍa with its lamp, light and dark, the phone's clipboard, and the latest messages and calls](../../assets/screens/home.png)
+
+<div class="shots">
+
+![Messages: the conversations, searched by name or number, and one open](../../assets/screens/messages.png)
+
+![Calls: incoming, outgoing and missed, each row calls back](../../assets/screens/calls.png)
+
+![Files: the phone's folders and files as cards, the path clickable along its length](../../assets/screens/files.png)
+
+</div>
+
+<p class="shots-note">Screenshots use a made-up phone and made-up people.</p>
+
 ## How it fits together
 
 <div class="flow">{`  Laptop                                     Phone
@@ -51,7 +69,7 @@ import { Card, CardGrid, LinkCard } from "@astrojs/starlight/components";
     tRPC server + client  ◀── Noise ──▶  tRPC client + server
     agents · files · jyoti                    calls · SMS · notifications
     the action log + phone's mirror            its log + laptop's mirror
-  Vyom popup · waybar · \`ekatva\` CLI           fingerprint (keystore)`}</div>
+  Darpaṇa · waybar · \`ekatva\` CLI              fingerprint (keystore)`}</div>
 
 <CardGrid>
   <LinkCard title="Pair your phone" href="/ekatva/start/pairing/" description="One QR code, four emoji, done." />
