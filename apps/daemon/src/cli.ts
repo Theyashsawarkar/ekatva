@@ -224,20 +224,20 @@ const PLACES: Record<string, string> = {
 };
 
 /**
- * Opens ekatva's window: the Vyom popup (instant, Vyom is resident).
+ * Opens ekatva's window: Darpaṇa, a Vyom popup (instant, Vyom is resident).
  */
 async function openWindow(tab: string | undefined): Promise<void> {
   const { spawnSync } = await import("node:child_process");
   const { homedir } = await import("node:os");
-  const args = ["ekatva", ...(tab ? [PLACES[tab] ?? tab] : [])];
+  const args = ["darpana", ...(tab ? [PLACES[tab] ?? tab] : [])];
   // ~/.local/bin first: the service's and sway's PATH often leave it out.
   for (const vyom of [`${homedir()}/.local/bin/vyom`, "vyom"]) {
     const r = spawnSync(vyom, args, { stdio: "ignore" });
     if (!r.error && r.status === 0) return;
   }
   throw new Error(
-    "the window is a Vyom popup: install Vyom and the ekatva plugin " +
-      "(https://github.com/Theyashsawarkar/ekatva-vyom)",
+    "the window is Darpaṇa, a Vyom popup: install Vyom and Darpaṇa " +
+      "(kosha install darpana, or https://github.com/Theyashsawarkar/darpana)",
   );
 }
 

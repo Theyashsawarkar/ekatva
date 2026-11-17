@@ -26,9 +26,9 @@ ekatva status
 ```
 
 The laptop's window is a [Vyom](https://github.com/Theyashsawarkar/vyom) popup,
-[ekatva-vyom](https://github.com/Theyashsawarkar/ekatva-vyom): clone it into
-`~/.local/share/vyom/plugins/ekatva` and restart Vyom
-(`systemctl --user restart vyom`). Open it with `vyom ekatva` or
+[Darpaṇa](https://github.com/Theyashsawarkar/darpana) (दर्पण, the mirror):
+`kosha install darpana` (or clone it into `~/.local/share/vyom/plugins/darpana`)
+and restart Vyom (`systemctl --user restart vyom`). Open it with `vyom darpana` or
 `ekatva window`; `ekatva window pair` opens straight on pairing, and
 `ekatva window calls` (messages, files, log, devices) on that place.
 `ekatva window` needs Vyom; the CLI does everything else without it.

@@ -20,7 +20,7 @@ a developer uses a laptop today:
 |---|---|
 | `ekatva` daemon | An always-on systemd user service on the laptop. It holds the link, serves the laptop's API to the phone, and keeps the action log. |
 | `ekatva` command | The CLI: pair, devices, grants, the log, undo, jyoti (keeping it awake), status. |
-| Laptop window | A [Vyom](https://github.com/Theyashsawarkar/vyom) popup ([ekatva-vyom](https://github.com/Theyashsawarkar/ekatva-vyom)), a client of the daemon that opens at once. |
+| Laptop window | A [Vyom](https://github.com/Theyashsawarkar/vyom) popup ([Darpaṇa](https://github.com/Theyashsawarkar/darpana)), a client of the daemon that opens at once. |
 | Phone app | React Native (Expo), protected by your fingerprint (its keys in the Android keystore). |
 
 All of it is TypeScript in [one repository](https://github.com/Theyashsawarkar/ekatva),
