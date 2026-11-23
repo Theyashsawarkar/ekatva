@@ -146,6 +146,13 @@ const laptopKeyFrom = async () =>
 describe("the daemon, end to end", () => {
   let p: Awaited<ReturnType<typeof phone>>;
 
+  it("answers the tunnel's 'still there?' and nothing else over plain HTTP", async () => {
+    const alive = await fetch(`http://127.0.0.1:${daemon.port}/alive`);
+    expect(alive.status).toBe(200);
+    expect(await alive.text()).toBe("ekatva");
+    expect((await fetch(`http://127.0.0.1:${daemon.port}/`)).status).toBe(404);
+  });
+
   it("pairs a phone after you confirm matching emoji", async () => {
     const offer = await laptopKeyFrom();
     expect(offer.name).toBe("ace");

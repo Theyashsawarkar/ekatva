@@ -14,6 +14,14 @@
  *               to `onChange` listeners (phones, the mailbox, the window).
  *   on demand   started when something asks (`start()`), stopped after
  *               `idleMinutes` with no phone on it.
+ *
+ * A tunnel can die while its program keeps running: after a network drop
+ * cloudflared may never get its connection back, and the quick tunnel's
+ * name is gone (it no longer resolves). So while it's up, every minute it
+ * asks itself through the tunnel (`https://<name>/alive`, answered by the
+ * laptop): two misses in a row and it's opened again, with a new URL. And
+ * before telling a phone where to go (`start()`), it checks first unless it
+ * answered in the last 30 s, so a phone is never sent to a dead address.
  */
 import { type ChildProcess, execFile, spawn } from "node:child_process";
 
@@ -57,6 +65,27 @@ const URL_IN = {
 const RESTART_MAX_MS = 5 * 60_000;
 /** Not installed: look again this often (it may be installed meanwhile). */
 const MISSING_RETRY_MS = 10 * 60_000;
+/** While up: ask through the tunnel this often. */
+const HEALTH_EVERY_MS = 60_000;
+/** Answered this recently: `start()` trusts it without asking again. */
+const FRESH_MS = 30_000;
+/** The path the laptop answers on, for asking itself through the tunnel. */
+export const ALIVE_PATH = "/alive";
+export const ALIVE_BODY = "ekatva";
+
+type Probe = (url: string) => Promise<boolean>;
+
+/** Does the tunnel's URL reach this laptop (through the tunnel and back)? */
+const reachable: Probe = async (url) => {
+  try {
+    const r = await fetch(`${url.replace(/^wss:/, "https:")}${ALIVE_PATH}`, {
+      signal: AbortSignal.timeout(10_000),
+    });
+    return r.status === 200 && (await r.text()) === ALIVE_BODY;
+  } catch {
+    return false;
+  }
+};
 
 export class Tunnel {
   private child: ChildProcess | null = null;
@@ -70,6 +99,11 @@ export class Tunnel {
   private since: number | null = null;
   private problem: string | null = null;
   private listeners = new Set<(i: TunnelInfo) => void>();
+  private healthTimer: ReturnType<typeof setInterval> | null = null;
+  /** When it last answered through the tunnel (ms). */
+  private lastOk = 0;
+  private misses = 0;
+  private checking: Promise<Reach> | null = null;
 
   constructor(
     readonly kind: TunnelKind,
@@ -79,6 +113,8 @@ export class Tunnel {
     private readonly spawner: Spawner = (cmd, args) =>
       spawn(cmd, args, { stdio: ["ignore", "pipe", "pipe"] }),
     private readonly restartBaseMs = 2_000,
+    private readonly probe: Probe = reachable,
+    private readonly healthEveryMs = HEALTH_EVERY_MS,
   ) {}
 
   get running(): boolean {
@@ -136,7 +172,20 @@ export class Tunnel {
   /** Starts it (or reuses the running one); resolves with how to reach the laptop. */
   start(timeoutMs = 30_000): Promise<Reach> {
     this.touch();
-    if (this.url) return Promise.resolve({ url: this.url, lan: [] });
+    if (this.url) {
+      if (Date.now() - this.lastOk < FRESH_MS) return Promise.resolve({ url: this.url, lan: [] });
+      // Not heard from lately: make sure it still reaches us before handing it out.
+      this.checking ??= this.healthy()
+        .then((ok): Promise<Reach> => {
+          if (ok && this.url) return Promise.resolve({ url: this.url, lan: [] });
+          if (this.url) this.recycle(`the ${this.kind} tunnel doesn't reach the laptop any more`);
+          return this.start(timeoutMs);
+        })
+        .finally(() => {
+          this.checking = null;
+        });
+      return this.checking;
+    }
     if (this.kind === "none") return Promise.resolve({ url: null, lan: [] });
     if (this.kind === "tailscale") return this.tailscale();
     this.starting ??= this.spawnTunnel(timeoutMs).finally(() => {
@@ -183,6 +232,9 @@ export class Tunnel {
           clearTimeout(timer);
           this.url = `wss://${m[1]}`;
           this.failures = 0;
+          this.lastOk = Date.now();
+          this.misses = 0;
+          this.watchHealth();
           this.log(`reachable from anywhere through ${kind}`);
           this.setState("up");
           settle({ url: this.url, lan: [] });
@@ -202,11 +254,55 @@ export class Tunnel {
         if (this.child === child) {
           this.child = null;
           this.url = null;
+          this.stopHealth();
           this.died(`${kind} stopped`);
         }
         settle({ url: null, lan: [] });
       });
     });
+  }
+
+  /** Asks through the tunnel whether it still reaches the laptop. */
+  private async healthy(): Promise<boolean> {
+    const url = this.url;
+    if (!url) return false;
+    const ok = await this.probe(url);
+    if (ok && this.url === url) {
+      this.lastOk = Date.now();
+      this.misses = 0;
+    }
+    return ok;
+  }
+
+  private watchHealth(): void {
+    this.stopHealth();
+    this.healthTimer = setInterval(() => {
+      if (!this.url || this.checking) return;
+      void this.healthy().then((ok) => {
+        if (ok || !this.url) return;
+        if (++this.misses < 2) return;
+        this.recycle(`the ${this.kind} tunnel stopped reaching the laptop`);
+        if (this.always) void this.start();
+      });
+    }, this.healthEveryMs);
+    this.healthTimer.unref?.();
+  }
+
+  private stopHealth(): void {
+    if (this.healthTimer) clearInterval(this.healthTimer);
+    this.healthTimer = null;
+  }
+
+  /** Its program runs but the tunnel is dead: stop it (a new one gets a new URL). */
+  private recycle(why: string): void {
+    this.log(`${why}; opening a new one`);
+    this.stopHealth();
+    const child = this.child;
+    this.child = null;
+    this.url = null;
+    this.misses = 0;
+    child?.kill("SIGTERM");
+    this.setState(this.always ? "starting" : "off", this.always ? why : null);
   }
 
   private missing(kind: string): void {
@@ -265,6 +361,7 @@ export class Tunnel {
   /** Stops it now (on demand: idle; or the laptop's service stopping). */
   private halt(): void {
     this.clearIdle();
+    this.stopHealth();
     if (this.restartTimer) clearTimeout(this.restartTimer);
     this.restartTimer = null;
     const child = this.child;

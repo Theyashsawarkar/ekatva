@@ -9,6 +9,7 @@ import { router } from "expo-router";
 import { View } from "react-native";
 import { stateOf } from "../../ui/agent-blocks";
 import { Asks, Avatar, ago, base, left, Spin, useNow } from "../../ui/agents/parts";
+import { agentRoute } from "../../ui/agents/route";
 import { errorText } from "../../ui/errors";
 import { Icon } from "../../ui/icon";
 import { Btn, H2, Item, List, Page, Pill, Txt, toast } from "../../ui/lac";
@@ -41,7 +42,7 @@ export default function Agents() {
     .filter((a) => !a.question && a.state === "done")
     .sort((x, y) => Number(unseen(y)) - Number(unseen(x)) || y.since - x.since);
   const idle = list.filter((a) => !a.question && a.state === "idle");
-  const open = (a: AgentSession) => router.push({ pathname: "/agent/[id]", params: { id: a.id } });
+  const open = (a: AgentSession) => router.push(agentRoute(a.id));
 
   const answer = (a: AgentSession, key: string, label: string) => {
     if (!client || !a.question) return;

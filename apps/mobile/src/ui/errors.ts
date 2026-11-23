@@ -36,6 +36,10 @@ export function errorText(e: unknown): string {
       // not JSON after all
     }
   }
+  // A native function that threw: Expo says only "Call to function 'X.y' has
+  // been rejected." and puts what went wrong on a "Caused by" line below.
+  const cause = /^Call to function .* has been rejected\.?\s*\n.*?Caused by:\s*(.+)/s.exec(m)?.[1];
+  if (cause) m = cause.replace(/^[\w.$]+(Exception|Error):\s*/, "");
   if (NETWORK.test(m)) return "The laptop didn't answer. Check the connection";
   m = m.replace(/^(TRPCClientError|TRPCError|Error|TypeError):\s*/i, "");
   m = m.split("\n")[0] ?? m;

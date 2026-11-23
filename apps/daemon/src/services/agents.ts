@@ -13,7 +13,7 @@ import { basename, join } from "node:path";
 import type { AgentSession, AgentTranscript, Done, Project } from "@ekatva/protocol";
 import { TRPCError } from "@trpc/server";
 import { expand, home, tilde } from "../paths.js";
-import { backgroundAgents, readScreen } from "./agentScreen.js";
+import { backgroundAgents, readScreen, readyForInput } from "./agentScreen.js";
 import { transcript } from "./agentTranscript.js";
 
 const AGENTS = { claude: "claude", codex: "codex", aider: "aider", gemini: "gemini" } as const;
@@ -59,6 +59,8 @@ export class AgentsService {
     private readonly run: Tmux = tmux,
     private readonly roots: string[] = [],
     private readonly now: () => number = Date.now,
+    /** How often `deliver` looks at a starting agent's screen. */
+    private readonly stepMs = 500,
   ) {}
 
   async list(): Promise<AgentSession[]> {
@@ -89,7 +91,13 @@ export class AgentsService {
         agent: agent as Kind,
         project: tilde(path ?? ""),
         state,
-        question: screen.question,
+        question: screen.question
+          ? {
+              text: screen.question.text,
+              options: screen.question.options,
+              hash: screen.question.hash,
+            }
+          : null,
         activity: screen.activity,
         since: this.since.get(id)?.at ?? this.now(),
         background: backgroundAgents(capture),
@@ -177,7 +185,14 @@ export class AgentsService {
     }
     const chosen = s.question.options.find((o) => o.key === option);
     if (!chosen) throw new TRPCError({ code: "BAD_REQUEST", message: "not one of the options" });
-    await this.run(["send-keys", "-t", id, chosen.key]);
+    // A menu without numbers: move its cursor to the option, then Enter.
+    const cursor = readScreen(await this.capture(id, 60)).question?.cursor;
+    if (cursor !== undefined) {
+      const moves = Number(chosen.key) - 1 - cursor;
+      for (let i = 0; i < Math.abs(moves); i++)
+        await this.run(["send-keys", "-t", id, moves > 0 ? "Down" : "Up"]);
+      await this.run(["send-keys", "-t", id, "Enter"]);
+    } else await this.run(["send-keys", "-t", id, chosen.key]);
     await this.run(["set", "-p", "-t", id, "-u", "@claude_wait"]).catch(() => undefined);
     void this.refresh().catch(() => undefined);
     return {
@@ -229,16 +244,10 @@ export class AgentsService {
     const pane = (await this.run(["display", "-p", "-t", name, "#{pane_id}"])).trim();
     await this.run(["send-keys", "-t", pane, "-l", "--", agent]);
     await this.run(["send-keys", "-t", pane, "Enter"]);
-    if (prompt) {
-      // Wait for its input box before typing.
-      for (let i = 0; i < 40; i++) {
-        await new Promise((r) => setTimeout(r, 500));
-        const screen = await this.capture(pane, 30);
-        if (/^❯\s*$/m.test(screen) || /esc to interrupt|\? for shortcuts/i.test(screen)) break;
-      }
-      await this.paste(pane, prompt);
-      await this.run(["send-keys", "-t", pane, "Enter"]);
-    }
+    // The first prompt goes in once its input box is there, in the background:
+    // it may ask something first (whether to trust the folder), which you
+    // answer on the phone. Never type before: an Enter would answer that.
+    if (prompt) void this.deliver(pane, prompt);
     const s = (await this.list()).find((x) => x.id === pane) ?? {
       id: pane,
       session: name,
@@ -252,6 +261,34 @@ export class AgentsService {
       background: [],
     };
     return { value: s, summary: `Started ${agent} in ${tilde(dir)} (session ${name})` };
+  }
+
+  /**
+   * Types the first prompt once the agent's input box is there: waits while
+   * it starts and while it asks something, gives up after `limitMs` or if
+   * the agent quit (the pane is a shell again).
+   */
+  private async deliver(pane: string, prompt: string, limitMs = 10 * 60_000): Promise<boolean> {
+    const until = this.now() + limitMs;
+    let seen = false;
+    while (this.now() < until) {
+      await new Promise((r) => setTimeout(r, this.stepMs));
+      const cmd = await this.run(["display", "-p", "-t", pane, "#{pane_current_command}"]).catch(
+        () => null,
+      );
+      if (cmd === null) return false; // the pane is gone
+      const agent = Object.values(AGENTS).some((a) => cmd.toLowerCase().includes(a));
+      if (agent) seen = true;
+      else if (seen) return false; // it started and quit (said No): nothing to type into
+      const screen = await this.capture(pane, 40);
+      if (agent && readyForInput(screen) && !readScreen(screen).question) {
+        await this.paste(pane, prompt);
+        await this.run(["send-keys", "-t", pane, "Enter"]);
+        void this.refresh().catch(() => undefined);
+        return true;
+      }
+    }
+    return false;
   }
 
   private async paste(target: string, text: string): Promise<void> {

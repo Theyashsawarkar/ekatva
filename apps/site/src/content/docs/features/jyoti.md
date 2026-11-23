@@ -4,13 +4,13 @@ description: "Keep the laptop awake from the phone, even with the lid closed."
 ---
 
 **Jyoti** (ज्योति) is the flame. Here it keeps the laptop awake, at three
-levels, each with its lamp:
+levels, each with its flame:
 
-| Level | Its lamp | What it does |
+| Level | Its flame | What it does |
 |---|---|---|
-| **Śānta** (शान्त, at rest, as a fire gone out) | the diya, unlit, in lilac-grey | The desktop dims, locks and sleeps as usual. |
-| **Akhaṇḍa** (अखण्ड, the unbroken flame) | the diya, in blue | No dimming, no lock, no sleep from idleness. |
-| **Nandādīpa** (नन्दादीप, the lamp kept burning day and night) | the samai, in ember | Akhaṇḍa, and the laptop **keeps running with the lid closed**. |
+| **Śānta** (शान्त, at rest, as a fire gone out) | the flame at dusk: lilac, no sparks | The desktop dims, locks and sleeps as usual. |
+| **Akhaṇḍa** (अखण्ड, the unbroken flame) | a blue flame | No dimming, no lock, no sleep from idleness. |
+| **Nandādīpa** (नन्दादीप, the lamp kept burning day and night) | a bright red flame | Akhaṇḍa, and the laptop **keeps running with the lid closed**. |
 
 Set it from the phone (swipe the Home tile), the laptop's popup
 (`Space j s` / `j a` / `j n`), the bar, quick settings, Super+Shift+a, or:

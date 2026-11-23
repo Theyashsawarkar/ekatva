@@ -1,7 +1,7 @@
 import { EventEmitter } from "node:events";
 import { createServer } from "node:http";
 import { ANNOUNCE, generateKeyPair, mailbox, Ntfy, nonce } from "@ekatva/link";
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import { Rendezvous } from "../src/services/rendezvous.js";
 import { Tunnel } from "../src/services/tunnel.js";
 
@@ -130,6 +130,55 @@ describe("tunnel kept up", () => {
     t.stop();
     expect(t.info()).toMatchObject({ state: "off", always: false, url: null });
     expect(f.kids).toHaveLength(2);
+  });
+
+  it("reopens a tunnel whose program runs but no longer reaches the laptop", async () => {
+    const f = dying();
+    // river-1 dies quietly (cloudflared lost Cloudflare after a network drop).
+    const asked: string[] = [];
+    const probe = async (url: string) => {
+      asked.push(url);
+      return !url.includes("river-1");
+    };
+    const t = new Tunnel("cloudflared", () => 47100, undefined, 10, f.spawner, 20, probe, 15);
+    const seen: (string | null)[] = [];
+    t.onChange((i) => seen.push(i.url));
+    t.keep(true);
+    await until(() => t.info().url === "wss://river-2.trycloudflare.com");
+    expect(t.info().state).toBe("up");
+    // Two misses in a row, not one, before giving up on it.
+    expect(asked.filter((u) => u.includes("river-1")).length).toBeGreaterThanOrEqual(2);
+    expect(seen.filter(Boolean)).toEqual([
+      "wss://river-1.trycloudflare.com",
+      "wss://river-2.trycloudflare.com",
+    ]);
+    t.stop();
+  });
+
+  it("checks a tunnel it hasn't heard from before sending a phone to it", async () => {
+    const f = dying();
+    let alive = true;
+    const t = new Tunnel(
+      "cloudflared",
+      () => 47100,
+      undefined,
+      10,
+      f.spawner,
+      20,
+      async () => alive,
+      60_000,
+    );
+    expect((await t.start()).url).toBe("wss://river-1.trycloudflare.com");
+    // Fresh: handed out without asking. A minute later, it's dead: a new one.
+    alive = false;
+    const now = Date.now();
+    const clock = vi.spyOn(Date, "now").mockReturnValue(now + 60_000);
+    const reach = t.start();
+    alive = true;
+    expect((await reach).url).toBe("wss://river-2.trycloudflare.com");
+    expect(f.kids).toHaveLength(2);
+    clock.mockRestore();
+    t.stop();
   });
 
   it("says when the program isn't installed", async () => {

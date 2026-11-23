@@ -9,13 +9,29 @@
  *    ❯ 1. Yes
  *      2. Yes, and don't ask again for pnpm commands in ~/aura
  *      3. No, and tell Claude what to do differently (esc)
+ *
+ * Some of its menus have no numbers (the "do you trust this folder?" one):
+ * a cursor on one option, the others lined up under it, and "Enter to
+ * confirm" below. Those are answered by moving the cursor, not by a digit:
+ * `cursor` says where it is.
+ *
+ *    ❯ No, exit
+ *      Yes, I trust this folder
+ *
+ *    Enter to confirm · Esc to cancel
  */
 import { toB64u, utf8 } from "@ekatva/link";
 import { blake2b } from "@noble/hashes/blake2.js";
 
 export interface Screen {
   state: "working" | "waiting" | "idle";
-  question: { text: string; options: { key: string; label: string }[]; hash: string } | null;
+  question: {
+    text: string;
+    options: { key: string; label: string }[];
+    hash: string;
+    /** An unnumbered menu: the option the cursor is on (0-based); answered with arrows. */
+    cursor?: number;
+  } | null;
   activity: string;
 }
 
@@ -24,6 +40,66 @@ const OPTION = /^(?:[❯›>▶]\s*)?(\d{1,2})[.)]\s+(.+)$/;
 const RULE = /^[\s─━═╌┄-]{10,}$/;
 
 const clean = (line: string) => line.replace(BOX, "").trim();
+/** Below an unnumbered menu. */
+const CONFIRM = /Enter to confirm/i;
+const CURSOR = /^(\s*)[❯›]\s+(\S.*)$/;
+
+/** True when the agent's input box is there and empty: it's ready for a prompt. */
+export function readyForInput(capture: string): boolean {
+  const lines = capture.replace(/\s+$/, "").split("\n");
+  return lines.some((l, i) => /^\s*❯\s*$/.test(l) && RULE.test(lines[i - 1] ?? ""));
+}
+
+/** A menu with a cursor and no numbers, above "Enter to confirm". */
+function unnumbered(tail: string[]): Screen["question"] {
+  let f = -1;
+  for (let i = tail.length - 1; i >= 0; i--)
+    if (CONFIRM.test(tail[i] ?? "")) {
+      f = i;
+      break;
+    }
+  if (f < 0) return null;
+  // Answered already: the screen moved on below it (the input box's rules).
+  if (tail.slice(f + 1).some((l) => RULE.test(l))) return null;
+  let c = -1;
+  for (let i = f - 1; i >= Math.max(0, f - 14); i--)
+    if (CURSOR.test(tail[i] ?? "")) {
+      c = i;
+      break;
+    }
+  if (c < 0) return null;
+  const cur = CURSOR.exec(tail[c] ?? "") as RegExpExecArray;
+  const col = (tail[c] ?? "").indexOf(cur[2] as string);
+  const indent = (l: string) => l.length - l.trimStart().length;
+  const isOption = (l: string | undefined) => !!l?.trim() && indent(l) === col;
+  let first = c;
+  while (isOption(tail[first - 1])) first--;
+  let last = c;
+  while (isOption(tail[last + 1])) last++;
+  if (last === first) return null;
+  const options = [];
+  for (let i = first; i <= last; i++) {
+    const label = i === c ? (cur[2] as string) : (tail[i] ?? "");
+    options.push({ key: String(i - first + 1), label: label.trim().replace(/\s+/g, " ") });
+  }
+  // The question: the paragraph above that asks something, else the nearest one.
+  const paras: string[][] = [[]];
+  for (let i = first - 1; i >= 0; i--) {
+    const l = tail[i] ?? "";
+    if (RULE.test(l)) break;
+    const t = clean(l);
+    if (!t) {
+      if ((paras[0] as string[]).length) paras.unshift([]);
+      continue;
+    }
+    (paras[0] as string[]).unshift(t);
+  }
+  const blocks = paras.filter((p) => p.length).map((p) => p.join(" "));
+  const text = (blocks.find((b) => b.includes("?")) ?? blocks.at(-1) ?? "Choose an option")
+    .replace(/\s+/g, " ")
+    .slice(0, 300);
+  return { text, options, hash: questionHash(text, options), cursor: c - first };
+}
 
 export function questionHash(text: string, options: { key: string; label: string }[]): string {
   return toB64u(blake2b(utf8.encode(JSON.stringify([text, options])), { dkLen: 9 }));
@@ -107,6 +183,8 @@ export function readScreen(capture: string): Screen {
       question = { text: qtext, options, hash: questionHash(qtext, options) };
     }
   }
+
+  question ??= unnumbered(tail);
 
   // What it's doing or last said: its spinner line, else its last "●" line.
   let activity = "";

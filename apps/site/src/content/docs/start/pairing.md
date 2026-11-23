@@ -76,7 +76,10 @@ about either:
    city). The laptop keeps a free [Cloudflare quick
    tunnel](https://developers.cloudflare.com/cloudflare-one/connections/connect-networks/do-more-with-tunnels/trycloudflare/)
    open **all the time while a phone is paired**, and opens it again by
-   itself if it drops. Install `cloudflared` (on Arch, `pacman -S
+   itself if it drops. It also checks, every minute and before giving a
+   phone its address, that the tunnel really reaches the laptop: after a
+   network drop `cloudflared` can keep running with a tunnel that's gone, and
+   then it's replaced by a new one. Install `cloudflared` (on Arch, `pacman -S
    cloudflared`); no account needed.
 
 The phone learns the tunnel's address three ways, so it's never stuck:
@@ -96,7 +99,8 @@ The phone learns the tunnel's address three ways, so it's never stuck:
   and connects. If there's nothing new it asks "where are you?" and the
   laptop answers.
 
-Not heard on this network, the phone tries the tunnel first; once it hears
+Not heard on this network (also when you scan the code), the phone tries
+the tunnel first, and gives it up to 10 seconds to open; once it hears
 the laptop's beacon, it moves to the direct link and drops the tunnel.
 
 - The tunnel only ever carries the end-to-end encrypted link (Noise, with the

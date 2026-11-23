@@ -8,6 +8,7 @@ import { router } from "expo-router";
 import { useEffect, useState } from "react";
 import { View } from "react-native";
 import { sameMedia } from "../../core/equal";
+import { agentRoute } from "../../ui/agents/route";
 import { errorText } from "../../ui/errors";
 import { AppearanceTile } from "../../ui/home/appearance-tile";
 import { DeviceTile } from "../../ui/home/device-tile";
@@ -212,7 +213,7 @@ export default function Home() {
           title={`${ask.session} asks you`}
           sub={ask.question?.text ?? ""}
           action="Answer"
-          onPress={() => router.push({ pathname: "/agent/[id]", params: { id: ask.id } })}
+          onPress={() => router.push(agentRoute(ask.id))}
         />
       ) : null}
 

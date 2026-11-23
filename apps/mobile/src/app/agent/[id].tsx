@@ -12,6 +12,7 @@ import { SafeAreaView, useSafeAreaInsets } from "react-native-safe-area-context"
 import { cached } from "../../core/unchanged";
 import { Blocks, stateOf } from "../../ui/agent-blocks";
 import { Spin } from "../../ui/agents/parts";
+import { paneOf } from "../../ui/agents/route";
 import { errorText } from "../../ui/errors";
 import { Icon } from "../../ui/icon";
 import { Navbar, Txt, toast } from "../../ui/lac";
@@ -22,7 +23,7 @@ import { font, k } from "../../ui/theme";
 const QUICK = ["Continue", "Run the tests", "Explain first"];
 
 export default function Agent() {
-  const { id } = useLocalSearchParams<{ id: string }>();
+  const id = paneOf(useLocalSearchParams<{ id: string }>().id);
   const { session } = useApp();
   const insets = useSafeAreaInsets();
   const link = useLink();

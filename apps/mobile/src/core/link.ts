@@ -37,6 +37,13 @@ import { type LaptopRecord, type Laptops, PHONE_DEFAULT } from "./laptops";
 import type { Secrets } from "./vault";
 
 /** Opens a WebSocket to `url`, as a transport, or fails within `timeoutMs`. */
+/**
+ * How long to wait for a socket to open: a few seconds on this network; more
+ * through the tunnel, which on mobile data is a DNS lookup, TLS and a hop
+ * through Cloudflare before the laptop even sees it.
+ */
+const openWait = (via: "lan" | "tunnel") => (via === "tunnel" ? 10_000 : 4000);
+
 export type Opener = (url: string, timeoutMs: number) => Promise<Transport>;
 
 /** Listens for datagrams on the beacon port; returns a function that stops listening. */
@@ -211,7 +218,13 @@ export class LinkManager {
       this.wanted = true;
       this.listen();
       const old = this.channel;
-      const result = await this.tryAll(laptop, offer.lan, offer.url ?? null);
+      // Not heard on this network (mobile data, another Wi-Fi): the tunnel first.
+      const result = await this.tryAll(
+        laptop,
+        offer.lan,
+        offer.url ?? null,
+        !this.nearOf(known.key),
+      );
       if (result === "ok") {
         if (old !== this.channel) old?.close("moved to the code's route");
         return laptop;
@@ -221,12 +234,12 @@ export class LinkManager {
           `Can't reach ${known.name}: ${result}. ${offer.url ? "Is the phone online?" : "Is the phone on the same Wi-Fi as the laptop?"}`,
         );
     }
-    const urls = this.urls(offer.lan, offer.url ?? null);
+    const urls = this.urls(offer.lan, offer.url ?? null, !this.nearOf(toB64u(offer.key)));
     if (!urls.length) throw new Error("the code has no address to reach the laptop at");
     for (const { url, via } of urls) {
       let t: Transport;
       try {
-        t = await this.d.open(url, 4000);
+        t = await this.d.open(url, openWait(via));
       } catch {
         continue;
       }
@@ -471,7 +484,7 @@ export class LinkManager {
     let error = "can't reach the laptop";
     for (const { url: u, via } of this.urls(lan, url, tunnelFirst)) {
       try {
-        const t = await this.d.open(u, 4000);
+        const t = await this.d.open(u, openWait(via));
         const { channel, welcome } = await connect(t, {
           me: this.d.secrets.identity,
           expect: fromB64u(laptop.key),

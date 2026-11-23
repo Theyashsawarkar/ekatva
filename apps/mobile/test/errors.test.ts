@@ -24,3 +24,13 @@ test("network failures say so plainly", () => {
 test("anything else still says something", () => {
   expect(errorText(undefined)).toBe("Something went wrong");
 });
+
+test("a native function's rejection shows its cause, not Expo's wrapper", () => {
+  const e = new Error(
+    "Call to function 'EkatvaPhone.scanQr' has been rejected.\n→ Caused by: com.google.mlkit.common.MlKitException: Failed to scan code.",
+  );
+  expect(errorText(e)).toBe("Failed to scan code.");
+  expect(errorText(new Error("Call to function 'EkatvaPhone.scanQr' has been rejected."))).toBe(
+    "Call to function 'EkatvaPhone.scanQr' has been rejected.",
+  );
+});

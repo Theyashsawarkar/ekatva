@@ -1,14 +1,17 @@
 /**
  * The laptop's notifications, newest first: what popped up there while you
  * were away from it. Each shows its app's own icon, its title and body
- * (tap for all of it); urgent ones carry a rose mark. Chips narrow it to
- * one app. Opening this clears the bell's count.
+ * (tap for all of it); urgent ones carry a rose mark. Filter, at the top
+ * right, narrows it to one app: a sheet lists them with their counts, and a
+ * single pill under the title says which one is on (× clears it). Opening
+ * this clears the bell's count.
  */
 import type { LaptopNoteEntry } from "@ekatva/protocol";
 import { useEffect, useMemo, useState } from "react";
-import { Image, Pressable, ScrollView, View } from "react-native";
+import { Image, Pressable, View } from "react-native";
 import { errorText } from "../ui/errors";
-import { Glyph, Navbar, Page, Txt } from "../ui/lac";
+import { Icon } from "../ui/icon";
+import { Glyph, Item, List, Navbar, Page, Sheet, Txt } from "../ui/lac";
 import { markSeen } from "../ui/notes/seen";
 import { useApp, useLaptop, useLink, usePoll } from "../ui/state";
 import { k, r } from "../ui/theme";
@@ -47,6 +50,7 @@ export default function LaptopNotifications() {
   });
   const [app, setApp] = useState<string | null>(null);
   const [open, setOpen] = useState<string | null>(null);
+  const [picking, setPicking] = useState(false);
 
   const items = notes.data?.items ?? [];
   const icons = notes.data?.icons ?? {};
@@ -55,11 +59,11 @@ export default function LaptopNotifications() {
     if (newest) markSeen(newest);
   }, [newest]);
 
-  // The apps with the most notifications first, for the chips.
+  // The apps with the most notifications first, with their counts, for the filter.
   const apps = useMemo(() => {
     const n = new Map<string, number>();
     for (const x of items) n.set(x.app, (n.get(x.app) ?? 0) + 1);
-    return [...n.entries()].sort((a, b) => b[1] - a[1]).map(([a]) => a);
+    return [...n.entries()].sort((a, b) => b[1] - a[1]);
   }, [items]);
   const shown = app ? items.filter((x) => x.app === app) : items;
 
@@ -72,135 +76,157 @@ export default function LaptopNotifications() {
     else days.push({ day: d, list: [x] });
   }
 
-  return (
-    <Page bottom={48}>
-      <Navbar back="Home" />
-      <Txt display w="700" size={30} style={{ letterSpacing: -0.6, marginTop: 4 }}>
-        From the laptop
-      </Txt>
-      <Txt size={14} color={k.sub} style={{ marginTop: 4, marginBottom: 14 }}>
-        {client
-          ? `What popped up on ${name}, newest first.`
-          : `Not connected: the history is on ${name}.`}
-      </Txt>
+  const pick = (a: string | null) => {
+    setApp(a);
+    setPicking(false);
+  };
 
-      {notes.error ? (
-        <Txt size={14} color={k.rose} style={{ marginBottom: 12 }}>
-          {/forbidden|not allowed|permission/i.test(notes.error)
-            ? `This phone doesn't see ${name}'s notifications. Allow it on the laptop (ekatva, this phone, Notifications).`
-            : errorText(notes.error)}
+  return (
+    <>
+      <Page bottom={48}>
+        <Navbar
+          back="Home"
+          right={
+            apps.length > 1 ? (
+              <Pressable
+                onPress={() => setPicking(true)}
+                accessibilityRole="button"
+                accessibilityLabel={app ? `Filter: ${app}` : "Filter by app"}
+                hitSlop={10}
+                style={{ flexDirection: "row", alignItems: "center", gap: 6 }}
+              >
+                <Icon name="filter" size={18} color={app ? k.brass2 : k.sub} />
+                <Txt size={15} color={app ? k.brass2 : k.sub}>
+                  Filter
+                </Txt>
+              </Pressable>
+            ) : null
+          }
+        />
+        <Txt display w="700" size={30} style={{ letterSpacing: -0.6, marginTop: 4 }}>
+          From the laptop
         </Txt>
-      ) : null}
+        <Txt size={14} color={k.sub} style={{ marginTop: 4, marginBottom: 14 }}>
+          {client
+            ? `What popped up on ${name}, newest first.`
+            : `Not connected: the history is on ${name}.`}
+        </Txt>
 
-      {apps.length > 1 ? (
-        <ScrollView
-          horizontal
-          showsHorizontalScrollIndicator={false}
-          contentContainerStyle={{ gap: 8, paddingBottom: 6 }}
-          style={{ marginHorizontal: -20, paddingHorizontal: 20, marginBottom: 6, flexGrow: 0 }}
-        >
-          <Chip label="All" count={items.length} on={app === null} onPress={() => setApp(null)} />
-          {apps.map((a) => (
-            <Chip
-              key={a}
-              label={a}
-              count={items.filter((x) => x.app === a).length}
-              on={app === a}
-              onPress={() => setApp(app === a ? null : a)}
-            />
-          ))}
-        </ScrollView>
-      ) : null}
-
-      {client && notes.data && !items.length ? (
-        <View style={{ alignItems: "center", gap: 10, marginTop: 40 }}>
-          <Glyph name="bell" color={k.sub} size={52} radius={16} />
-          <Txt size={15} color={k.sub} align="center">
-            Nothing from {name} yet.
+        {notes.error ? (
+          <Txt size={14} color={k.rose} style={{ marginBottom: 12 }}>
+            {/forbidden|not allowed|permission/i.test(notes.error)
+              ? `This phone doesn't see ${name}'s notifications. Allow it on the laptop (ekatva, this phone, Notifications).`
+              : errorText(notes.error)}
           </Txt>
-        </View>
-      ) : null}
+        ) : null}
 
-      {days.map(({ day, list }) => (
-        <View key={day}>
-          <View
-            style={{
+        {app ? (
+          <Pressable
+            onPress={() => pick(null)}
+            accessibilityRole="button"
+            accessibilityLabel={`Showing only ${app}. Show all`}
+            style={({ pressed }) => ({
+              alignSelf: "flex-start",
               flexDirection: "row",
-              alignItems: "baseline",
-              marginTop: 18,
-              marginBottom: 8,
+              alignItems: "center",
               gap: 8,
-            }}
-          >
-            <Txt display w="600" size={16} style={{ letterSpacing: -0.16 }}>
-              {day}
-            </Txt>
-            <Txt mono size={12} color={k.mute}>
-              {list.length}
-            </Txt>
-          </View>
-          <View
-            style={{
-              backgroundColor: k.ink2,
+              height: 32,
+              paddingLeft: 12,
+              paddingRight: 10,
+              marginBottom: 4,
+              borderRadius: 16,
+              backgroundColor: pressed ? k.plum : `${k.brass2}1f`,
               borderWidth: 1,
-              borderColor: k.line,
-              borderRadius: r.m,
-              overflow: "hidden",
-            }}
+              borderColor: `${k.brass2}59`,
+            })}
           >
-            {list.map((x, i) => (
-              <Row
-                key={x.id + x.at}
-                x={x}
-                icon={x.icon ? icons[x.icon] : undefined}
-                first={i === 0}
-                open={open === x.id}
-                onPress={() => setOpen(open === x.id ? null : x.id)}
-              />
-            ))}
-          </View>
-        </View>
-      ))}
-    </Page>
-  );
-}
+            <Txt w="600" size={13.5} color={k.brass2} lines={1}>
+              {app}
+            </Txt>
+            <Txt mono size={11.5} color={k.mute}>
+              {String(shown.length)}
+            </Txt>
+            <Icon name="close" size={14} color={k.brass2} />
+          </Pressable>
+        ) : null}
 
-function Chip({
-  label,
-  count,
-  on,
-  onPress,
-}: {
-  label: string;
-  count: number;
-  on: boolean;
-  onPress: () => void;
-}) {
-  return (
-    <Pressable
-      onPress={onPress}
-      accessibilityRole="button"
-      accessibilityState={{ selected: on }}
-      accessibilityLabel={`${label}, ${count}`}
-      style={({ pressed }) => ({
-        flexDirection: "row",
-        alignItems: "center",
-        gap: 7,
-        height: 36,
-        paddingHorizontal: 14,
-        borderRadius: 18,
-        backgroundColor: on ? k.brass2 : pressed ? k.plum : "transparent",
-        borderWidth: 1,
-        borderColor: on ? k.brass2 : k.line2,
-      })}
-    >
-      <Txt w="600" size={13.5} color={on ? k.ink : k.text} lines={1}>
-        {label}
-      </Txt>
-      <Txt mono size={11.5} color={on ? k.ink : k.mute}>
-        {String(count)}
-      </Txt>
-    </Pressable>
+        {client && notes.data && !items.length ? (
+          <View style={{ alignItems: "center", gap: 10, marginTop: 40 }}>
+            <Glyph name="bell" color={k.sub} size={52} radius={16} />
+            <Txt size={15} color={k.sub} align="center">
+              Nothing from {name} yet.
+            </Txt>
+          </View>
+        ) : null}
+
+        {days.map(({ day, list }) => (
+          <View key={day}>
+            <View
+              style={{
+                flexDirection: "row",
+                alignItems: "baseline",
+                marginTop: 18,
+                marginBottom: 8,
+                gap: 8,
+              }}
+            >
+              <Txt display w="600" size={16} style={{ letterSpacing: -0.16 }}>
+                {day}
+              </Txt>
+              <Txt mono size={12} color={k.mute}>
+                {list.length}
+              </Txt>
+            </View>
+            <View
+              style={{
+                backgroundColor: k.ink2,
+                borderWidth: 1,
+                borderColor: k.line,
+                borderRadius: r.m,
+                overflow: "hidden",
+              }}
+            >
+              {list.map((x, i) => (
+                <Row
+                  key={x.id + x.at}
+                  x={x}
+                  icon={x.icon ? icons[x.icon] : undefined}
+                  first={i === 0}
+                  open={open === x.id}
+                  onPress={() => setOpen(open === x.id ? null : x.id)}
+                />
+              ))}
+            </View>
+          </View>
+        ))}
+      </Page>
+      {picking ? (
+        <Sheet title="Show" onClose={() => setPicking(false)}>
+          <List inset={16}>
+            {[["All apps", items.length] as const, ...apps].map(([a, n], i) => {
+              const on = i === 0 ? app === null : app === a;
+              return (
+                <Item
+                  key={a}
+                  title={a}
+                  titleColor={on ? k.brass2 : undefined}
+                  onPress={() => pick(i === 0 ? null : a)}
+                  label={`${a}, ${n}`}
+                  right={
+                    <View style={{ flexDirection: "row", alignItems: "center", gap: 10 }}>
+                      <Txt mono size={12} color={k.mute}>
+                        {String(n)}
+                      </Txt>
+                      {on ? <Icon name="check" size={18} color={k.brass2} /> : null}
+                    </View>
+                  }
+                />
+              );
+            })}
+          </List>
+        </Sheet>
+      ) : null}
+    </>
   );
 }
 

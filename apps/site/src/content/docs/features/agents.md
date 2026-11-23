@@ -9,7 +9,7 @@ reads each one's state from its screen:
 | State | What you see |
 |---|---|
 | **working** | It's running (its status line says "esc to interrupt"), with what it's doing. |
-| **waiting** | It's asking: the question and its numbered options, exactly as on screen. |
+| **waiting** | It's asking: the question and its options, exactly as on screen (numbered ones, and menus without numbers like "do you trust this folder?", answered by moving the cursor). |
 | **done** | It finished its turn and is waiting for you (Claude's Stop hook marked it). |
 | **idle** | Nothing happening. |
 
@@ -29,6 +29,12 @@ New sessions start only in your projects: those Claude knows (`~/.claude.json`),
 those open in tmux, and git repositories in `~/personal`, `~/codes`, `~/work`,
 `~/projects`, `~/src` (configurable). Each runs in its own tmux session, with
 a shell underneath so it stays when the agent exits.
+
+The first prompt is typed only once the agent's input box is there. If it
+asks something first (Claude asks whether to trust a folder it hasn't seen),
+the session opens on the phone with that question; answer it there and the
+prompt goes in after. If you say no, nothing is typed into the shell it
+leaves.
 
 ```sh
 ekatva agents

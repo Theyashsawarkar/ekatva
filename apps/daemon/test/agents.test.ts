@@ -100,3 +100,75 @@ describe("agents in tmux", () => {
     expect(projects.map((p) => p.name)).toContain("proj");
   });
 });
+
+describe("starting a session that asks first", () => {
+  // A pretend Claude that asks whether to trust the folder (a menu with no
+  // numbers, answered with the arrow keys), then shows its input box. It's
+  // a copy of bash named "claude" (so tmux sees "claude"), running this as
+  // its rc file.
+  const TRUSTING = `
+printf ' Accessing workspace:\\n\\n Quick safety check: Is this a project you trust?\\n\\n'
+printf ' ❯ No, exit\\n   Yes, I trust this folder\\n\\n Enter to confirm · Esc to cancel\\n'
+pos=0
+while IFS= read -rsn1 k; do
+  if [[ $k == $'\\e' ]]; then read -rsn2 r; [[ $r == '[B' ]] && pos=1; [[ $r == '[A' ]] && pos=0
+  elif [[ -z $k ]]; then break; fi
+done
+[[ $pos == 0 ]] && { echo 'did not start: not trusted'; exit 0; }
+printf '────────────────────────────────────────\\n❯ \\n────────────────────────────────────────\\n'
+IFS= read -r line
+printf '● got prompt: %s\\n' "$line"
+sleep 60
+exit 0
+`;
+  let svc: AgentsService;
+  const screenOf = (id: string) => run(["capture-pane", "-p", "-t", id]);
+
+  beforeAll(async () => {
+    await fs.mkdir(join(dir, "fakebin"));
+    await fs.mkdir(join(dir, "home"));
+    await fs.copyFile("/usr/bin/bash", join(dir, "fakebin/claude"));
+    await fs.chmod(join(dir, "fakebin/claude"), 0o755);
+    await fs.writeFile(join(dir, "home/.bashrc"), TRUSTING);
+    // New sessions get a plain bash that finds the pretend claude.
+    await run([
+      "set",
+      "-g",
+      "default-command",
+      `env HOME=${join(dir, "home")} PATH=${join(dir, "fakebin")}:/usr/bin:/bin bash --norc --noprofile`,
+    ]);
+    svc = new AgentsService(run, [], Date.now, 50);
+  });
+
+  const started = async () => {
+    const s = (await svc.start(join(dir, "proj"), "hello there", "claude")).value;
+    let q: Awaited<ReturnType<AgentsService["list"]>>[number] | undefined;
+    await wait(async () => {
+      q = (await svc.list()).find((x) => x.id === s.id && !!x.question);
+      return !!q;
+    });
+    return q!;
+  };
+
+  it("shows the question on the phone, and types the prompt only after Yes", async () => {
+    const s = await started();
+    expect(s.question?.options.map((o) => o.label)).toEqual([
+      "No, exit",
+      "Yes, I trust this folder",
+    ]);
+    // Asking: nothing typed (an Enter would have answered "No, exit").
+    await new Promise((r) => setTimeout(r, 400));
+    expect(await screenOf(s.id)).not.toContain("hello there");
+    await svc.answer(s.id, "2", s.question!.hash);
+    await wait(async () => (await screenOf(s.id)).includes("● got prompt: hello there"));
+    expect(await screenOf(s.id)).toContain("● got prompt: hello there");
+  });
+
+  it("after No, types nothing into the shell it leaves", async () => {
+    const s = await started();
+    await svc.answer(s.id, "1", s.question!.hash);
+    await wait(async () => (await screenOf(s.id)).includes("did not start"));
+    await new Promise((r) => setTimeout(r, 400));
+    expect(await screenOf(s.id)).not.toContain("hello there");
+  });
+});

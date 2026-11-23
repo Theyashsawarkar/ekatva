@@ -73,7 +73,7 @@ import { RootBridge } from "./services/root.js";
 import { type ShareHost, ShareInbox } from "./services/share.js";
 import { SystemService } from "./services/system.js";
 import { TerminalService } from "./services/terminal.js";
-import { Tunnel } from "./services/tunnel.js";
+import { ALIVE_BODY, ALIVE_PATH, Tunnel } from "./services/tunnel.js";
 
 const VERSION = "0.1.1";
 /** A peer that fails this many handshakes in the window is shut out for it. */
@@ -466,7 +466,12 @@ export class Daemon {
 
   // ------------------------------------------------------------- the link
   private async listen(): Promise<void> {
-    this.http = createServer((_req, res) => {
+    this.http = createServer((req, res) => {
+      // The tunnel asks itself whether it still reaches the laptop (services/tunnel.ts).
+      if (req.method === "GET" && req.url === ALIVE_PATH) {
+        res.writeHead(200, { "content-type": "text/plain" }).end(ALIVE_BODY);
+        return;
+      }
       res.writeHead(404).end();
     });
     // A Noise message is at most 64 KiB; nothing bigger is ever valid.

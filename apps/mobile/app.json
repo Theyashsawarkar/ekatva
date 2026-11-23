@@ -78,7 +78,7 @@
           "android": {
             "usesCleartextTraffic": true,
             "minSdkVersion": 29,
-            "extraProguardRules": "-keep class io.github.theyashsawarkar.ekatva.** { *; }\n",
+            "extraProguardRules": "-keep class io.github.theyashsawarkar.ekatva.** { *; }\n-keep class com.google.mlkit.** { *; }\n-keep class com.google.android.gms.internal.mlkit_** { *; }\n-keep class com.google.android.libraries.barhopper.** { *; }\n-keep class com.google.photos.vision.barhopper.** { *; }\n",
             "enableMinifyInReleaseBuilds": true,
             "enableShrinkResourcesInReleaseBuilds": true,
             "enablePngCrunchInReleaseBuilds": true,

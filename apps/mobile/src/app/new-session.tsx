@@ -2,6 +2,7 @@
 import { router } from "expo-router";
 import { useState } from "react";
 import { Pressable, TextInput, View } from "react-native";
+import { agentRoute } from "../ui/agents/route";
 import { errorText } from "../ui/errors";
 import { Icon } from "../ui/icon";
 import { Btn, Item, List, Sheet, Txt } from "../ui/lac";
@@ -31,7 +32,7 @@ export default function NewSession() {
     const first = prompt.trim();
     await client.agents.start
       .mutate({ project, prompt: first ? first : null, agent })
-      .then((s) => router.replace({ pathname: "/agent/[id]", params: { id: s.id } }))
+      .then((s) => router.replace(agentRoute(s.id)))
       .catch((e: unknown) => {
         setError(errorText(e));
         setBusy(false);
