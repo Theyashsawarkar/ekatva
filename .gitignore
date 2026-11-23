@@ -9,3 +9,7 @@ out/
 coverage/
 /apps/mobile/modules/*/android/build/
 /apps/mobile/modules/*/android/.cxx/
+
+# Python
+__pycache__/
+*.pyc
