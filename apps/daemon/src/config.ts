@@ -8,6 +8,7 @@
  *   [undo]    days = 30              max_gb = 5
  *   [agents]  roots = ["~/personal", "~/codes"]
  *   [tunnel]  kind = "cloudflared"   # or "ngrok", "tailscale", "none"
+ *             mode = "always"        # or "on-demand"
  *             server = "https://ntfy.sh"   idle_minutes = 10
  */
 import { readFileSync } from "node:fs";
@@ -63,11 +64,22 @@ const Config = z.object({
   tunnel: z
     .object({
       kind: z.enum(["cloudflared", "ngrok", "tailscale", "none"]).default("cloudflared"),
+      /**
+       * always: up all the time while a phone is paired, so the phone comes
+       * back from any network at once. on-demand: opened when a phone away
+       * asks through the mailbox, closed after `idle_minutes`.
+       */
+      mode: z.enum(["always", "on-demand"]).default("always"),
       /** The ntfy server for the rendezvous. */
       server: z.string().url().default("https://ntfy.sh"),
       idle_minutes: z.number().min(1).default(10),
     })
-    .default({ kind: "cloudflared", server: "https://ntfy.sh", idle_minutes: 10 }),
+    .default({
+      kind: "cloudflared",
+      mode: "always",
+      server: "https://ntfy.sh",
+      idle_minutes: 10,
+    }),
 });
 export type Config = z.infer<typeof Config>;
 

@@ -7,7 +7,7 @@ description: "One QR code, four emoji, done."
 ekatva pair
 ```
 
-Or open the **ekatva** window and press **Pair a phone** (<kbd>Space</kbd> <kbd>a</kbd> <kbd>p</kbd>): it's
+Or open the **ekatva** window and press **Connect a phone** (<kbd>Space</kbd> <kbd>a</kbd> <kbd>p</kbd>): it's
 the easiest way, and it shows the request and the emoji when the phone asks.
 If the window is closed, the "wants to pair" notification opens it when you
 click it.
@@ -68,21 +68,51 @@ encrypted.
 
 ## From anywhere
 
-`ekatva pair` opens a tunnel and the QR code carries its URL as well as the
-laptop's local address, so the phone pairs from any network: mobile data or
-another Wi-Fi. (`ekatva pair --lan` skips the tunnel, for the same Wi-Fi
-only.) The default tunnel is a Cloudflare quick tunnel: install `cloudflared`
-(on Arch, `pacman -S cloudflared`); no account needed. After pairing, you don't need to do
-anything: when the phone can't reach the laptop where it last was, it asks the
-pair's **private mailbox** on [ntfy](https://ntfy.sh) "where are you?"; the
-laptop starts a tunnel and answers with its URL; the phone connects.
+There are two ways for the phone to find the laptop, and you rarely think
+about either:
 
+1. **The same network**: the beacon above, straight to the laptop.
+2. **A secure tunnel**: from any network (mobile data, another Wi-Fi, another
+   city). The laptop keeps a free [Cloudflare quick
+   tunnel](https://developers.cloudflare.com/cloudflare-one/connections/connect-networks/do-more-with-tunnels/trycloudflare/)
+   open **all the time while a phone is paired**, and opens it again by
+   itself if it drops. Install `cloudflared` (on Arch, `pacman -S
+   cloudflared`); no account needed.
+
+The phone learns the tunnel's address three ways, so it's never stuck:
+
+- **On the same Wi-Fi, by itself.** While linked, the laptop tells the phone
+  its route (the tunnel's URL and its local addresses), and again whenever it
+  changes. Leave the Wi-Fi and the phone comes back through the tunnel, with
+  no QR code.
+- **From the QR code.** The code in the window (or `ekatva pair`) carries the
+  tunnel's URL too, so it works from any network. A **new** phone pairs (the
+  four emoji); a phone that's **already paired** just connects and keeps the
+  new route, with no emoji and no pairing again: handy when the tunnel's
+  address changed while the phone was away.
+- **From the pair's private mailbox** on [ntfy](https://ntfy.sh). Whenever the
+  tunnel's URL changes (a laptop restart, a dropped tunnel), the laptop posts
+  the new one there, and a phone that can't reach the old address reads it
+  and connects. If there's nothing new it asks "where are you?" and the
+  laptop answers.
+
+Not heard on this network, the phone tries the tunnel first; once it hears
+the laptop's beacon, it moves to the direct link and drops the tunnel.
+
+- The tunnel only ever carries the end-to-end encrypted link (Noise, with the
+  keys from pairing). Its address isn't a secret: a stranger who finds it gets
+  a handshake that fails.
 - The mailbox's topic and key come from the two devices' keys: the ntfy server
-  sees a random topic name and ciphertext. Messages older than 10 minutes are
-  refused.
-- The tunnel (a free Cloudflare quick tunnel by default; or ngrok, or your
-  Tailscale address) only ever carries the end-to-end encrypted link, gets a
-  new URL each time, and stops after 10 idle minutes.
+  sees a random topic name and ciphertext. An answer older than 10 minutes is
+  refused, an address announcement older than 12 hours.
+- Nothing listens on a public port: `cloudflared` connects out.
+- The window's Devices page shows **From anywhere**: *Open* (green),
+  *Opening* (yellow), *Off* (red: `cloudflared` isn't installed). So does
+  `ekatva status`. On the phone, Settings → Connection says how it's
+  connected now and whether it's ready to come back from anywhere.
+- Prefer the old way (a tunnel only while a phone away asks for it, closed
+  after 10 idle minutes)? Set `mode = "on-demand"` under `[tunnel]`.
+  `ekatva pair --lan` skips the tunnel, for the same Wi-Fi only.
 
 ## What the phone may do
 

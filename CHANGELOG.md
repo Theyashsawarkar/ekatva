@@ -4,6 +4,13 @@ Newest first. Releases are tags (`vX.Y.Z`); every package's `version` moves toge
 
 ## Unreleased
 
+- **Two ways to connect, and the phone always knows both.** On the same network the phone goes straight to the laptop (the beacon, as before). From anywhere else it goes through a secure tunnel (a free Cloudflare quick tunnel), which the laptop now keeps **up all the time while a phone is paired** and reopens by itself when it drops (`[tunnel] mode = "always"`, the default; `"on-demand"` is the old way).
+- **The phone learns the tunnel on the same Wi-Fi, with no QR**: while linked, the laptop sends its route (`link.route` / `link.watch`: the tunnel's URL and state, its LAN addresses) and every change. Leaving the Wi-Fi, the phone comes back through the tunnel by itself; not hearing the laptop's beacon, it tries the tunnel before stale LAN addresses.
+- **A paired laptop's QR code reconnects the phone** from any network: no emoji, no pairing again, and the new route is kept. A new phone still pairs with the four emoji. The window's button is **Connect a phone**.
+- **The laptop posts each new tunnel URL to the pair's mailbox unasked**, so a phone away finds it without asking and waiting.
+- **Fixed: finding the laptop through the mailbox never worked on ntfy.sh.** Messages were posted with `X-Cache: no`, so the server never kept them, and both sides *poll* (which only sees kept messages): the phone's "where are you?" and the laptop's answer were never seen. This was very likely why a phone on mobile data stayed "connecting".
+- The window's Devices page shows **From anywhere** (open, opening, off: `cloudflared` isn't installed), and `ekatva status` says it too. The phone's Settings has a **Connection** section: how it's connected now, whether it's ready to come back from anywhere, and *Scan the laptop's code*.
+- Tests no longer start a real `cloudflared` (`tunnelSpawner`); a daemon only keeps the tunnel up when asked (`keepTunnel`, the service sets it from the config).
 - A plan for what comes next, `docs/plans/always-linked-and-the-hub.md`: the laptop keeps a secure tunnel up once a phone is paired (a stable address, a QR that attaches a phone to it, a link that survives changing networks), and ekatva becomes the hub every Vayu phone app (nāda, vāgdevī…) uses to reach the laptop.
 
 ## v0.1.1 -- 2026-11-18

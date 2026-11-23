@@ -1,7 +1,7 @@
 import { createServer } from "node:http";
 import { describe, expect, it } from "vitest";
 import { generateKeyPair } from "../src/noise.js";
-import { mailbox, Ntfy, nonce } from "../src/rendezvous.js";
+import { ANNOUNCE, mailbox, Ntfy, nonce } from "../src/rendezvous.js";
 
 const laptop = generateKeyPair();
 const phone = generateKeyPair();
@@ -23,6 +23,17 @@ describe("rendezvous", () => {
     const stranger = mailbox(generateKeyPair(), laptop.publicKey);
     expect(stranger.topic).not.toBe(a.topic);
     expect(stranger.open(a.seal(msg))).toBeNull();
+  });
+
+  it("keeps the laptop's unasked announcement useful for hours, an answer for minutes", () => {
+    const a = mailbox(laptop, phone.publicKey);
+    const b = mailbox(phone, laptop.publicKey);
+    const hourAgo = Date.now() - 60 * 60 * 1000;
+    const here = { t: "here" as const, at: hourAgo, url: "wss://x.trycloudflare.com", lan: [] };
+    expect(b.open(a.seal({ ...here, n: ANNOUNCE }))).toMatchObject({ n: ANNOUNCE });
+    expect(b.open(a.seal({ ...here, n: nonce() }))).toBeNull();
+    const dayAgo = Date.now() - 13 * 60 * 60 * 1000;
+    expect(b.open(a.seal({ ...here, at: dayAgo, n: ANNOUNCE }))).toBeNull();
   });
 
   it("refuses stale, damaged and malformed messages", () => {

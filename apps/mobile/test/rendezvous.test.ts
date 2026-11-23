@@ -1,3 +1,4 @@
+import { EventEmitter } from "node:events";
 import * as fs from "node:fs/promises";
 import { createServer, type Server } from "node:http";
 import { tmpdir } from "node:os";
@@ -48,6 +49,7 @@ describe("finding the laptop from elsewhere", () => {
   let ntfy: { server: Server; url: string };
   let phone: Session;
   let ws: ReturnType<typeof createWSClient>;
+  let local: ReturnType<typeof createTRPCClient<LocalRouter>>;
 
   beforeAll(async () => {
     root = await fs.mkdtemp(join(tmpdir(), "ekatva-rv-"));
@@ -56,7 +58,7 @@ describe("finding the laptop from elsewhere", () => {
     ntfy = await fakeNtfy();
     const config = loadConfig(join(root, "none.toml"));
     config.name = "ace";
-    config.tunnel.server = ntfy.url; // cloudflared isn't installed here: the answer carries the LAN only
+    config.tunnel.server = ntfy.url;
     daemon = new Daemon({
       config,
       key: generateKeyPair(),
@@ -71,6 +73,13 @@ describe("finding the laptop from elsewhere", () => {
       desktopNotifications: false,
       lan: (port) => [`127.0.0.1:${port}`],
       rendezvousEveryMs: 300,
+      // No real tunnel in a test: cloudflared "isn't installed", so answers carry the LAN only.
+      tunnelSpawner: () => {
+        const child = new EventEmitter() as EventEmitter & { kill: () => void };
+        child.kill = () => undefined;
+        setTimeout(() => child.emit("error", Object.assign(new Error("x"), { code: "ENOENT" })), 1);
+        return child as never;
+      },
       jyotiHost: {
         run: async () => ({ code: 0, out: "" }),
         hold: () => ({ stop: async () => undefined, onExit() {} }),
@@ -136,7 +145,7 @@ describe("finding the laptop from elsewhere", () => {
       url: `ws+unix://${join(root, "ekatva.sock")}:/`,
       WebSocket: WebSocket as never,
     });
-    const local = createTRPCClient<LocalRouter>({ links: [wsLink({ client: ws })] });
+    local = createTRPCClient<LocalRouter>({ links: [wsLink({ client: ws })] });
     const offer = await local.admin.pair.start.mutate({ away: false });
     const sub = local.admin.pair.pending.subscribe(undefined, {
       onData: (l) => {
@@ -171,4 +180,34 @@ describe("finding the laptop from elsewhere", () => {
     expect(phone.link.state).toMatchObject({ status: "online", via: "lan" });
     expect(phone.laptops.get(key)?.lan).toEqual([`127.0.0.1:${daemon.port}`]);
   }, 30_000);
+
+  it("learns the laptop's route while linked (its tunnel's state too)", async () => {
+    for (let i = 0; i < 100 && !phone.laptops.get(daemon.id)?.away; i++)
+      await new Promise((r) => setTimeout(r, 20));
+    expect(phone.laptops.get(daemon.id)?.away).toMatchObject({ kind: "cloudflared" });
+    expect((await local.admin.link.route.query()).lan).toEqual([`127.0.0.1:${daemon.port}`]);
+  });
+
+  it("a paired laptop's code reconnects the phone: no emoji, no pairing again", async () => {
+    const key = daemon.id;
+    phone.link.stop();
+    await phone.laptops.update(key, { lan: ["127.0.0.1:9"], url: null });
+    let asked = false;
+    const sub = local.admin.pair.pending.subscribe(undefined, {
+      onData: (l) => {
+        if (l.length) asked = true;
+      },
+    });
+    const offer = await local.admin.pair.start.mutate({ away: false });
+    let sas = false;
+    const laptop = await phone.link.pair(offer.uri, () => {
+      sas = true;
+    });
+    sub.unsubscribe();
+    expect(laptop.key).toBe(key);
+    expect(phone.link.state).toMatchObject({ status: "online", via: "lan" });
+    expect(sas).toBe(false);
+    expect(asked).toBe(false);
+    expect(phone.laptops.get(key)?.lan[0]).toBe(`127.0.0.1:${daemon.port}`);
+  }, 20_000);
 });

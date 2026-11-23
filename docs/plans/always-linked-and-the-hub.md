@@ -1,6 +1,12 @@
 # Plan: always linked, and ekatva as the hub
 
-Status: planned (2026-11-18). Two pieces of work, in this order:
+Status: planned (2026-11-18). 2026-11-23: milestone 1 done (the tunnel kept
+up while a phone is paired, restarted by itself, each new URL posted to the
+mailbox) and milestone 2 done in a simpler form (the pairing QR is also the
+"connect from anywhere" QR: a paired phone that scans it just connects and
+keeps the route; and the phone learns the route over the link itself, on
+the same Wi-Fi, through `link.watch`). Not yet: a stable named tunnel,
+make-before-break, push wake-ups. Two pieces of work, in this order:
 
 1. **Always linked.** Once paired, the phone and the laptop reach each other
    from anywhere, through a secure tunnel the laptop sets up by itself, and

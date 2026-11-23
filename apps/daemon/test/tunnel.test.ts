@@ -1,6 +1,6 @@
 import { EventEmitter } from "node:events";
 import { createServer } from "node:http";
-import { generateKeyPair, mailbox, Ntfy, nonce } from "@ekatva/link";
+import { ANNOUNCE, generateKeyPair, mailbox, Ntfy, nonce } from "@ekatva/link";
 import { describe, expect, it } from "vitest";
 import { Rendezvous } from "../src/services/rendezvous.js";
 import { Tunnel } from "../src/services/tunnel.js";
@@ -79,6 +79,82 @@ describe("tunnel", () => {
   });
 });
 
+describe("tunnel kept up", () => {
+  /** A cloudflared that gives a new URL each start and can be killed from outside. */
+  function dying() {
+    const kids: (EventEmitter & { kill: () => void })[] = [];
+    let n = 0;
+    const spawner = (_cmd: string, _args: string[]) => {
+      const child = new EventEmitter() as EventEmitter & {
+        stdout: EventEmitter;
+        stderr: EventEmitter;
+        kill: () => void;
+      };
+      child.stdout = new EventEmitter();
+      child.stderr = new EventEmitter();
+      child.kill = () => child.emit("exit", 0);
+      const url = `https://river-${++n}.trycloudflare.com`;
+      setTimeout(() => child.stderr.emit("data", Buffer.from(`INF |  ${url}  |`)), 5);
+      kids.push(child);
+      return child as never;
+    };
+    return { kids, spawner };
+  }
+
+  const until = async (ok: () => boolean) => {
+    for (let i = 0; i < 200 && !ok(); i++) await new Promise((r) => setTimeout(r, 10));
+  };
+
+  it("opens at once, comes back by itself under a new URL, and says each one", async () => {
+    const f = dying();
+    const t = new Tunnel("cloudflared", () => 47100, undefined, 10, f.spawner, 20);
+    const seen: (string | null)[] = [];
+    t.onChange((i) => seen.push(i.url));
+    t.keep(true);
+    await until(() => t.info().state === "up");
+    expect(t.info()).toMatchObject({
+      state: "up",
+      always: true,
+      url: "wss://river-1.trycloudflare.com",
+    });
+    // cloudflared dies: it is opened again, with its new URL.
+    f.kids[0]?.emit("exit", 1);
+    expect(t.info().state).toBe("starting");
+    await until(() => t.info().url === "wss://river-2.trycloudflare.com");
+    expect(t.info().state).toBe("up");
+    expect(seen.filter(Boolean)).toEqual([
+      "wss://river-1.trycloudflare.com",
+      "wss://river-2.trycloudflare.com",
+    ]);
+    // Back to on demand: no restarting after that.
+    t.stop();
+    expect(t.info()).toMatchObject({ state: "off", always: false, url: null });
+    expect(f.kids).toHaveLength(2);
+  });
+
+  it("says when the program isn't installed", async () => {
+    const t = new Tunnel(
+      "cloudflared",
+      () => 47100,
+      undefined,
+      10,
+      () => {
+        const child = new EventEmitter() as EventEmitter & { kill: () => void };
+        child.kill = () => undefined;
+        setTimeout(
+          () => child.emit("error", Object.assign(new Error("spawn"), { code: "ENOENT" })),
+          5,
+        );
+        return child as never;
+      },
+    );
+    t.keep(true);
+    await until(() => t.info().state === "missing");
+    expect(t.info()).toMatchObject({ state: "missing", problem: "cloudflared isn't installed" });
+    t.stop();
+  });
+});
+
 describe("rendezvous on the laptop", () => {
   it("answers a phone's 'where are you?' with the tunnel's URL, sealed", async () => {
     const store: { id: string; topic: string; message: string }[] = [];
@@ -134,6 +210,13 @@ describe("rendezvous on the laptop", () => {
         n,
       },
     ]);
+    // A new URL is said unasked, to every paired phone's mailbox.
+    await rv.announce("wss://new-sea.trycloudflare.com");
+    const told = (await ntfy.poll(mb.topic))
+      .map((m) => mb.open(m.message))
+      .filter((m) => m?.t === "here" && m.n === ANNOUNCE);
+    expect(told).toEqual([expect.objectContaining({ url: "wss://new-sea.trycloudflare.com" })]);
+    store.splice(store.length - 1, 1);
     // The same question isn't answered twice.
     await rv.check();
     expect((await ntfy.poll(mb.topic)).length).toBe(2);

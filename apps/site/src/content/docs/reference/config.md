@@ -24,6 +24,9 @@ roots = ["~/personal", "~/codes", "~/work"]   # where your projects are
 
 [tunnel]
 kind = "cloudflared"    # or "ngrok", "tailscale", "none"
+mode = "always"         # kept up while a phone is paired; or "on-demand"
+server = "https://ntfy.sh"   # the pair's private mailbox
+idle_minutes = 10       # on-demand only: closed after this long unused
 ```
 
 ## Where things are

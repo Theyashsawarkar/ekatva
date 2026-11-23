@@ -44,6 +44,7 @@ import {
   type PendingPair,
   type PhoneRouter,
   PRESETS,
+  type Route,
   serveRouter,
   type Undo,
   verify,
@@ -127,6 +128,14 @@ export interface DaemonOptions {
   lan?: (port: number) => string[];
   /** Watch the rendezvous mailboxes (default: when a tunnel kind is set). */
   rendezvous?: boolean;
+  /**
+   * Keep the tunnel up all the time while a phone is paired (the service:
+   * `[tunnel] mode = "always"`, the default). Off unless set: tests never
+   * open a real tunnel.
+   */
+  keepTunnel?: boolean;
+  /** Starts the tunnel's program (tests: a fake cloudflared). */
+  tunnelSpawner?: (cmd: string, args: string[]) => import("node:child_process").ChildProcess;
   rendezvousEveryMs?: number;
   /** Desktop notifications (pairing requests, log mismatches). */
   /** `open`: a window tab to show when the notification is clicked. */
@@ -263,7 +272,16 @@ export class Daemon {
       () => this.port,
       (m) => this.log(m),
       o.config.tunnel.idle_minutes,
+      ...(o.tunnelSpawner ? [o.tunnelSpawner] : []),
     );
+    // A new tunnel URL: tell the connected phones (link.watch), the window,
+    // and every paired phone's mailbox, for the ones away right now.
+    let lastUrl: string | null = null;
+    this.tunnel.onChange((info) => {
+      this.emitRoute();
+      if (info.url && info.url !== lastUrl) void this.rendezvous?.announce(info.url);
+      lastUrl = info.url;
+    });
     this.root = new RootBridge(
       o.rootSocketPath ?? join(dirname(o.socketPath), "ekatva-root.sock"),
       (m) => this.log(m),
@@ -345,6 +363,7 @@ export class Daemon {
       );
       this.rendezvous.start(this.o.rendezvousEveryMs);
     }
+    this.keepTunnel();
     if (this.o.desktopNotifications !== false) {
       this.bridge = new NotificationBridge(
         this.o.desktopNotifications ?? new DesktopNotifications((m) => this.log(m)),
@@ -701,6 +720,18 @@ export class Daemon {
   private makeServices(): LaptopServices {
     return {
       status: () => this.system.status(),
+      link: {
+        route: async () => this.route(),
+        changes: (signal) =>
+          feed(
+            signal,
+            (push) => {
+              this.routeListeners.add(push);
+              return () => this.routeListeners.delete(push);
+            },
+            async () => this.route(),
+          ),
+      },
       jyoti: {
         get: () => this.jyoti.get(),
         set: (level, minutes) => this.jyoti.set(level, minutes),
@@ -829,6 +860,23 @@ export class Daemon {
 
   // ------------------------------------------------- this laptop's own user
   private deviceListeners = new Set<(d: Device[]) => void>();
+  private routeListeners = new Set<(r: Route) => void>();
+
+  /** Every way to reach the laptop now. */
+  route(): Route {
+    const tunnel = this.tunnel.info();
+    return { url: tunnel.url, lan: this.lanAddresses(), tunnel };
+  }
+
+  private emitRoute(): void {
+    const r = this.route();
+    for (const cb of this.routeListeners) cb(r);
+  }
+
+  /** Always-up tunnel while a phone is paired (when the service asks for it). */
+  private keepTunnel(): void {
+    this.tunnel.keep(!!this.o.keepTunnel && this.devices.all().length > 0);
+  }
 
   private emitDevices(): void {
     const list = this.deviceList();
@@ -928,6 +976,7 @@ export class Daemon {
         };
         await this.devices.put(record);
         await this.mirrorOf(p.key);
+        this.keepTunnel();
         p.decide({ ok: true, welcome: { grants: chosen, name: this.o.config.name } });
         const device = this.deviceList().find((d) => d.key === p.key) as Device;
         return {
@@ -975,6 +1024,7 @@ export class Daemon {
         await this.devices.remove(d.key);
         this.peers.get(d.key)?.close("unpaired");
         this.emitDevices();
+        this.keepTunnel();
         return {
           value: null,
           summary: `Unpaired ${d.name}`,

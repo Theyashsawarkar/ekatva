@@ -332,6 +332,11 @@ export type PhoneEvent = z.infer<typeof PhoneEvent>;
 // ---------------------------------------------------------------- services
 export interface LaptopServices {
   status(): Promise<Status>;
+  link: {
+    route(): Promise<Route>;
+    /** The route now, then every change (the tunnel's new URL). */
+    changes(signal: AbortSignal | undefined): AsyncIterable<Route>;
+  };
   jyoti: {
     get(): Promise<Jyoti>;
     set(level: JyotiLevel, minutes: number | null): Promise<Done<Jyoti>>;
@@ -443,6 +448,33 @@ export const PendingPair = z.object({
   at: z.number(),
 });
 export type PendingPair = z.infer<typeof PendingPair>;
+
+/** The laptop's tunnel, as the phone and the window see it. */
+export const TunnelInfo = z.object({
+  kind: z.enum(["cloudflared", "ngrok", "tailscale", "none"]),
+  /** off · starting (or waiting to try again) · up · missing (not installed) */
+  state: z.enum(["off", "starting", "up", "missing"]),
+  url: z.string().nullable(),
+  /** Kept up all the time (a phone is paired), or only on demand. */
+  always: z.boolean(),
+  since: z.number().nullable(),
+  problem: z.string().nullable(),
+});
+export type TunnelInfo = z.infer<typeof TunnelInfo>;
+
+/**
+ * Every way to reach the laptop right now: its tunnel (from anywhere) and
+ * its addresses on the local network. A connected phone keeps it, so it
+ * can come back through the tunnel after leaving the Wi-Fi, without a QR.
+ */
+export const Route = z.object({
+  /** The tunnel's wss:// URL, when it is up. */
+  url: z.string().nullable(),
+  /** host:port on the local network. */
+  lan: z.array(z.string()),
+  tunnel: TunnelInfo,
+});
+export type Route = z.infer<typeof Route>;
 
 export const Offer = z.object({
   uri: z.string(),
@@ -866,8 +898,16 @@ function capOf(action: string): Capability | undefined {
   return proc?._def.meta?.cap;
 }
 
+const link = api.router({
+  route: p.meta({ cap: "status" }).query(({ ctx }) => ctx.services.link.route()),
+  watch: p
+    .meta({ cap: "status" })
+    .subscription(({ ctx, signal }) => stream(ctx.services.link.changes(signal))),
+});
+
 export const laptopRouter = api.router({
   status: p.meta({ cap: "status" }).query(({ ctx }) => ctx.services.status()),
+  link,
   agents,
   jyoti,
   power,
@@ -901,6 +941,13 @@ const admin = api.router({
     watch: p
       .meta({ cap: "admin" })
       .subscription(({ ctx, signal }) => stream(local(ctx).calls.watch(signal))),
+  }),
+  /** The route (the tunnel's state) for the window: same as the phone's `link.watch`. */
+  link: api.router({
+    route: p.meta({ cap: "admin" }).query(({ ctx }) => ctx.services.link.route()),
+    watch: p
+      .meta({ cap: "admin" })
+      .subscription(({ ctx, signal }) => stream(ctx.services.link.changes(signal))),
   }),
   pair: api.router({
     start: p

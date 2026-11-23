@@ -1,9 +1,11 @@
 /**
  * Answering "where are you?" from paired phones that can't reach the
  * laptop directly: start the tunnel, post its URL to the pair's private
- * mailbox (see @ekatva/link's rendezvous).
+ * mailbox (see @ekatva/link's rendezvous). And, unasked, post the new
+ * address whenever the tunnel's URL changes, so a phone away finds it at
+ * its next look without waiting for an answer.
  */
-import { fromB64u, type KeyPair, mailbox, Ntfy } from "@ekatva/link";
+import { ANNOUNCE, fromB64u, type KeyPair, mailbox, Ntfy } from "@ekatva/link";
 import type { Tunnel } from "./tunnel.js";
 
 export class Rendezvous {
@@ -32,6 +34,18 @@ export class Rendezvous {
   stop(): void {
     if (this.timer) clearInterval(this.timer);
     this.timer = null;
+  }
+
+  /** Posts where the laptop is now to every paired phone's mailbox (or one phone's). */
+  async announce(url: string | null, only?: string): Promise<void> {
+    const lan = this.lan();
+    for (const d of this.devices()) {
+      if (only && d.key !== only) continue;
+      const mb = mailbox(this.me, fromB64u(d.key));
+      await this.ntfy
+        .publish(mb.topic, mb.seal({ t: "here", at: Date.now(), url, lan, n: ANNOUNCE }))
+        .catch((e) => this.log(`couldn't post the new address: ${(e as Error).message}`));
+    }
   }
 
   /** Looks in every paired phone's mailbox once. */

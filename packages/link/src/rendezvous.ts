@@ -18,6 +18,14 @@ import type { KeyPair } from "./noise.js";
 
 const AD = utf8.encode("ekatva/rv/1");
 export const MAX_AGE_MS = 10 * 60 * 1000;
+/**
+ * The laptop also says its address unasked whenever its tunnel's URL
+ * changes: a "here" with this `n`. It stays useful for longer (ntfy keeps
+ * it 12 h); a replayed old one only points at a tunnel that has gone, and
+ * the Noise handshake keeps anyone else out anyway.
+ */
+export const ANNOUNCE = "";
+export const ANNOUNCE_MAX_AGE_MS = 12 * 60 * 60 * 1000;
 
 export type RvMessage =
   /** The phone: where are you? */
@@ -53,7 +61,8 @@ export function mailbox(me: KeyPair, other: Uint8Array): Mailbox {
         if (raw.length < 12 + 16) return null;
         const plain = chacha20poly1305(key, raw.subarray(0, 12), AD).decrypt(raw.subarray(12));
         const msg = JSON.parse(utf8.decode(plain)) as RvMessage;
-        if (typeof msg.at !== "number" || Math.abs(now - msg.at) > MAX_AGE_MS) return null;
+        const maxAge = msg.t === "here" && msg.n === ANNOUNCE ? ANNOUNCE_MAX_AGE_MS : MAX_AGE_MS;
+        if (typeof msg.at !== "number" || Math.abs(now - msg.at) > maxAge) return null;
         if (msg.t !== "where" && msg.t !== "here") return null;
         if (
           msg.t === "here" &&
@@ -96,12 +105,13 @@ export class Ntfy {
     }
   }
 
+  /**
+   * Posts a message. The server must keep it (ntfy caches 12 h): both
+   * sides poll, and a poll only sees kept messages. (It was sent with
+   * `X-Cache: no` before, so neither side ever saw the other's.)
+   */
   async publish(topic: string, message: string): Promise<void> {
-    const r = await this.request(`${this.server}/${topic}`, {
-      method: "POST",
-      body: message,
-      headers: { "X-Cache": "no" },
-    });
+    const r = await this.request(`${this.server}/${topic}`, { method: "POST", body: message });
     if (!r.ok) throw new Error(`ntfy: ${r.status}`);
   }
 

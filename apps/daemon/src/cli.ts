@@ -340,6 +340,7 @@ async function main(argv: string[]): Promise<void> {
       undoDir: dirs.undo(),
       socketPath: socketPath(),
       notify,
+      keepTunnel: config.tunnel.mode === "always",
     });
     await d.start();
     console.error(`identity in the ${where}`);
@@ -504,6 +505,20 @@ async function main(argv: string[]): Promise<void> {
           api.status.query(),
           api.admin.devices.list.query(),
         ]);
+        // An older service has no route: say nothing about the tunnel then.
+        const route = await api.admin.link.route.query().catch(() => null);
+        const t = route?.tunnel;
+        const away = !t
+          ? ""
+          : t.state === "up"
+            ? `from anywhere: through ${t.url}\n`
+            : t.state === "starting"
+              ? `from anywhere: opening the ${t.kind} tunnel${t.problem ? ` (${t.problem})` : ""}\n`
+              : t.state === "missing"
+                ? `from anywhere: no (${t.problem}; install it, or the phone only connects on the same network)\n`
+                : t.kind === "none"
+                  ? 'from anywhere: no ([tunnel] kind = "none")\n'
+                  : `from anywhere: ${t.always ? "no phone paired yet" : "opened when a phone away asks"}\n`;
         const online = devices.filter((d) => d.online);
         if (rest.includes("--waybar")) {
           const text = online.length ? online.map((d) => d.name).join(", ") : "";
@@ -511,10 +526,10 @@ async function main(argv: string[]): Promise<void> {
             `${JSON.stringify({ text, tooltip: `${online.length} phone(s) connected · jyoti ${LEVEL_NAME[s.jyoti]} · ${s.waiting} agent(s) waiting`, class: [online.length ? "connected" : "idle", `jyoti-${s.jyoti}`] })}\n`,
           );
         } else if (rest.includes("--json"))
-          process.stdout.write(`${JSON.stringify({ ...s, devices })}\n`);
+          process.stdout.write(`${JSON.stringify({ ...s, devices, route })}\n`);
         else
           process.stdout.write(
-            `${s.name}: jyoti ${LEVEL_NAME[s.jyoti]}, ${s.waiting} agent(s) waiting, ${online.length ? `connected: ${online.map((d) => `${d.name} (${d.via === "lan" ? "same network" : "from away"}, encrypted)`).join(", ")}` : "no phone connected"}\n${s.firewall ? `warning: ${s.firewall.problem}.\n  fix: ${s.firewall.fix}\n` : ""}`,
+            `${s.name}: jyoti ${LEVEL_NAME[s.jyoti]}, ${s.waiting} agent(s) waiting, ${online.length ? `connected: ${online.map((d) => `${d.name} (${d.via === "lan" ? "same network" : "from away"}, encrypted)`).join(", ")}` : "no phone connected"}\n${away}${s.firewall ? `warning: ${s.firewall.problem}.\n  fix: ${s.firewall.fix}\n` : ""}`,
           );
         break;
       }

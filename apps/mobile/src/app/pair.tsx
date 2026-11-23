@@ -1,3 +1,4 @@
+import { parseOffer, toB64u } from "@ekatva/link";
 import * as Clipboard from "expo-clipboard";
 import { router } from "expo-router";
 import { useEffect, useRef, useState } from "react";
@@ -21,6 +22,8 @@ export default function Pair() {
   const [emoji, setEmoji] = useState<string[] | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [done, setDone] = useState<string | null>(null);
+  /** The code was a paired laptop's: connecting, not pairing. */
+  const [known, setKnown] = useState<string | null>(null);
   const busy = useRef(false);
 
   const scanned = async (data: string) => {
@@ -33,6 +36,13 @@ export default function Pair() {
     busy.current = true;
     setError(null);
     setPhase("connecting");
+    let was: string | null = null;
+    try {
+      was = session.laptops.get(toB64u(parseOffer(data).key))?.name ?? null;
+    } catch {
+      // damaged: pair() says so
+    }
+    setKnown(was);
     try {
       const laptop = await session.link.pair(data, setEmoji);
       setDone(laptop.name);
@@ -79,7 +89,27 @@ export default function Pair() {
   return (
     <Page scroll={false} bottom={24}>
       <Navbar back="Close" mid="Pair with a laptop" />
-      {emoji ? (
+      {done && !emoji ? (
+        <View style={{ flex: 1, justifyContent: "center" }}>
+          <Panel
+            style={{
+              alignItems: "center",
+              paddingVertical: 28,
+              paddingHorizontal: 18,
+              gap: 12,
+              borderColor: `${k.sage}73`,
+            }}
+          >
+            <Glyph name="check" color={k.sage} size={56} radius={18} />
+            <Txt display w="600" size={19} align="center">
+              Connected to {done}
+            </Txt>
+            <Txt size={14} color={k.sub} align="center" style={{ lineHeight: 20 }}>
+              It knows the way now: on any network, the phone comes back by itself.
+            </Txt>
+          </Panel>
+        </View>
+      ) : emoji ? (
         <View style={{ flex: 1, justifyContent: "center" }}>
           <Panel
             style={{
@@ -110,7 +140,10 @@ export default function Pair() {
             {phase === "connecting" ? (
               <>
                 <ActivityIndicator color={k.brass} size="large" />
-                <Txt w="600">Connecting to the laptop…</Txt>
+                <Txt w="600">{known ? `Connecting to ${known}…` : "Connecting to the laptop…"}</Txt>
+                <Txt size={13} color={k.sub} align="center">
+                  Through its tunnel or on this Wi-Fi, whichever answers
+                </Txt>
               </>
             ) : (
               <>
@@ -119,8 +152,9 @@ export default function Pair() {
                   Scan the laptop's code
                 </Txt>
                 <Txt size={14} color={k.sub} align="center" style={{ lineHeight: 20 }}>
-                  On the laptop, run ekatva pair (or open its window), then scan the QR code it
-                  shows.
+                  On the laptop, open ekatva's window (Super+Ctrl+O) or run ekatva pair, then scan
+                  the QR code. It works from any network: a new laptop pairs, a paired one just
+                  connects.
                 </Txt>
                 <Btn
                   label="Scan the code"
@@ -143,7 +177,7 @@ export default function Pair() {
       {error ? (
         <Panel style={{ padding: 16, marginTop: 12, borderColor: `${k.rose}73` }}>
           <Txt w="600" color={k.rose}>
-            Couldn't pair
+            {known ? `Couldn't connect to ${known}` : "Couldn't pair"}
           </Txt>
           <Txt size={14} color={k.sub} style={{ marginTop: 4 }}>
             {error}
@@ -152,7 +186,8 @@ export default function Pair() {
         </Panel>
       ) : null}
       <Txt size={12.5} color={k.mute} align="center" style={{ marginTop: 14 }}>
-        The code works once, for two minutes. Nothing in it is a lasting secret.
+        The code works for two minutes. Nothing in it is a lasting secret: the connection is
+        end-to-end encrypted with this phone's own key.
       </Txt>
     </Page>
   );

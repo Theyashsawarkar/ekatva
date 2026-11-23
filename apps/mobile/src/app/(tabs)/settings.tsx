@@ -2,7 +2,7 @@ import { CAPABILITIES, type Capability } from "@ekatva/protocol";
 import Constants from "expo-constants";
 import { router } from "expo-router";
 import { Alert, View } from "react-native";
-import { Glyph, H2, Item, List, Page, Toggle, Txt } from "../../ui/lac";
+import { Glyph, H2, Item, List, Page, Pill, Toggle, Txt } from "../../ui/lac";
 import { PhoneFeatures } from "../../ui/phone-features";
 import { useApp, useLaptop, useLink, usePoll } from "../../ui/state";
 import { k } from "../../ui/theme";
@@ -71,6 +71,22 @@ export default function Settings() {
       ? "Connecting…"
       : "Not connected.";
 
+  // Reachable from anywhere: the phone knows the laptop's tunnel (learnt on
+  // the same Wi-Fi, from its code, or from its mailbox).
+  const away = laptop?.away;
+  const [awayLabel, awayTone, awaySub]: [string, "sage" | "amber" | "rose", string] =
+    away?.state === "missing"
+      ? [
+          "Off",
+          "rose",
+          `${away.problem ?? "The tunnel isn't installed"} on ${laptop?.name}: same Wi-Fi only`,
+        ]
+      : away?.state === "starting"
+        ? ["Opening", "amber", `${laptop?.name} is opening its tunnel`]
+        : laptop?.url
+          ? ["Ready", "sage", "Leave the Wi-Fi and it comes back through the laptop's tunnel"]
+          : ["Not yet", "amber", "Connect once on the same Wi-Fi, or scan the laptop's code"];
+
   return (
     <Page title="Settings">
       <List>
@@ -107,6 +123,48 @@ export default function Settings() {
 
       {laptop ? (
         <>
+          <H2>Connection</H2>
+          <List>
+            <Item
+              glyph={via === "tunnel" ? "globe" : via === "lan" ? "wifi" : "offline"}
+              glyphColor={via ? k.sage : link.status === "connecting" ? k.amber : k.mute}
+              title={
+                via === "lan"
+                  ? "On the same Wi-Fi"
+                  : via === "tunnel"
+                    ? "Through the tunnel"
+                    : link.status === "connecting"
+                      ? "Connecting…"
+                      : "Not connected"
+              }
+              sub={
+                via === "lan"
+                  ? "Straight to the laptop, end-to-end encrypted"
+                  : via === "tunnel"
+                    ? "From another network, end-to-end encrypted"
+                    : link.status === "offline" && link.error
+                      ? link.error
+                      : "It keeps trying by itself"
+              }
+            />
+            <Item
+              glyph="globe"
+              glyphColor={awayTone === "sage" ? k.sage : awayTone === "amber" ? k.amber : k.rose}
+              title="From anywhere"
+              sub={awaySub}
+              subLines={2}
+              right={<Pill label={awayLabel} tone={awayTone} />}
+            />
+            <Item
+              glyph="qr"
+              glyphColor={k.brass2}
+              title="Scan the laptop's code"
+              sub="Connects from any network, no pairing again"
+              chev
+              onPress={() => router.push("/pair")}
+            />
+          </List>
+
           <H2>What {laptop.name} may do here</H2>
           <List inset={16}>
             {PHONE_CAPS.map((cap) => {

@@ -7,6 +7,13 @@ export interface LaptopRecord {
   name: string;
   lan: string[];
   url: string | null;
+  /** The laptop's tunnel when last told (link.watch): for "reachable from anywhere". */
+  away?: {
+    state: "off" | "starting" | "up" | "missing";
+    kind: string;
+    problem: string | null;
+    at: number;
+  };
   pairedAt: number;
   lastSeen: number | null;
   /** What this laptop may do on the phone (phone.* capabilities). */

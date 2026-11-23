@@ -6,6 +6,7 @@
  * the phone's API, and keeping a verified copy of the laptop's action log.
  */
 import {
+  ANNOUNCE,
   beaconKey,
   type Channel,
   CLOSE,
@@ -28,6 +29,7 @@ import {
   type LaptopRouter,
   type PhoneServices,
   phoneRouter,
+  type Route,
   serveRouter,
 } from "@ekatva/protocol";
 import { createTRPCClient, createWSClient, type TRPCClient, wsLink } from "@trpc/client";
@@ -178,11 +180,19 @@ export class LinkManager {
     this.stopBeacons = null;
   }
 
-  private urls(lan: string[], url: string | null): { url: string; via: "lan" | "tunnel" }[] {
-    return [
-      ...lan.map((h) => ({ url: `ws://${h}/link`, via: "lan" as const })),
-      ...(url ? [{ url: `${url.replace(/\/+$/, "")}/link`, via: "tunnel" as const }] : []),
-    ];
+  /**
+   * Where to try, in order. `tunnelFirst`: the laptop wasn't heard on this
+   * network, so its saved LAN addresses are probably elsewhere (each costs
+   * a timeout): the tunnel first, then them.
+   */
+  private urls(
+    lan: string[],
+    url: string | null,
+    tunnelFirst = false,
+  ): { url: string; via: "lan" | "tunnel" }[] {
+    const direct = lan.map((h) => ({ url: `ws://${h}/link`, via: "lan" as const }));
+    const tunnel = url ? [{ url: `${url.replace(/\/+$/, "")}/link`, via: "tunnel" as const }] : [];
+    return tunnelFirst ? [...tunnel, ...direct] : [...direct, ...tunnel];
   }
 
   /** Pairs with the laptop in the QR code; `onSas` gets the four emoji to show. */
@@ -190,6 +200,27 @@ export class LinkManager {
     if (LinkManager.active && LinkManager.active !== this) LinkManager.active.stop();
     LinkManager.active = this;
     const offer = parseOffer(uri);
+    // A laptop this phone already knows: the code is only its route. Save
+    // it and connect with the keys we have, no emoji (Noise proves it's the
+    // same laptop). If it doesn't know this phone any more, pair afresh.
+    const known = this.d.laptops.get(toB64u(offer.key));
+    if (known) {
+      const lan = [...offer.lan, ...known.lan.filter((a) => !offer.lan.includes(a))].slice(0, 4);
+      await this.d.laptops.update(known.key, { lan, url: offer.url ?? known.url });
+      const laptop = this.d.laptops.get(known.key) as LaptopRecord;
+      this.wanted = true;
+      this.listen();
+      const old = this.channel;
+      const result = await this.tryAll(laptop, offer.lan, offer.url ?? null);
+      if (result === "ok") {
+        if (old !== this.channel) old?.close("moved to the code's route");
+        return laptop;
+      }
+      if (result !== "stop")
+        throw new Error(
+          `Can't reach ${known.name}: ${result}. ${offer.url ? "Is the phone online?" : "Is the phone on the same Wi-Fi as the laptop?"}`,
+        );
+    }
     const urls = this.urls(offer.lan, offer.url ?? null);
     if (!urls.length) throw new Error("the code has no address to reach the laptop at");
     for (const { url, via } of urls) {
@@ -416,22 +447,29 @@ export class LinkManager {
     this.set({ status: "connecting", laptop: laptop.key });
     const near = this.nearOf(laptop.key);
     const lan = near ? [near, ...laptop.lan.filter((a) => a !== near)] : laptop.lan;
-    let result = await this.tryAll(laptop, lan, laptop.url);
+    // Heard here: straight to it. Not heard: the tunnel first (it works from
+    // any network), the saved LAN addresses after it.
+    let result = await this.tryAll(laptop, lan, laptop.url, !near);
     if (result === "ok" || result === "stop") return;
     // Not where it was: ask the pair's mailbox where it is now (not too often).
     const found = (await this.mayAsk(laptop.key)) ? await this.ask(laptop) : null;
     if (found) {
       await this.d.laptops.update(laptop.key, { lan: found.lan, url: found.url });
-      result = await this.tryAll(laptop, found.lan, found.url);
+      result = await this.tryAll(laptop, found.lan, found.url, !this.nearOf(laptop.key));
       if (result === "ok" || result === "stop") return;
     }
     this.scheduleRetry(laptop.key, result);
   }
 
   /** Tries each address in turn: "ok", "stop" (don't retry), or the last error. */
-  private async tryAll(laptop: LaptopRecord, lan: string[], url: string | null): Promise<string> {
+  private async tryAll(
+    laptop: LaptopRecord,
+    lan: string[],
+    url: string | null,
+    tunnelFirst = false,
+  ): Promise<string> {
     let error = "can't reach the laptop";
-    for (const { url: u, via } of this.urls(lan, url)) {
+    for (const { url: u, via } of this.urls(lan, url, tunnelFirst)) {
       try {
         const t = await this.d.open(u, 4000);
         const { channel, welcome } = await connect(t, {
@@ -485,6 +523,18 @@ export class LinkManager {
     const mb = mailbox(this.d.secrets.identity, fromB64u(laptop.key));
     const n = nonce();
     try {
+      // The laptop says each new tunnel address unasked: a newer one than
+      // ours needs no question (and no wait).
+      let latest: { url: string | null; lan: string[]; at: number } | null = null;
+      for (const m of await this.d.ntfy.poll(mb.topic, "12h")) {
+        const msg = mb.open(m.message, this.now());
+        if (msg?.t === "here" && msg.n === ANNOUNCE && msg.url && (!latest || msg.at > latest.at))
+          latest = { url: msg.url, lan: msg.lan, at: msg.at };
+      }
+      if (latest && latest.url !== laptop.url) {
+        console.info("[ekatva link] the laptop's mailbox has its new address");
+        return { url: latest.url, lan: latest.lan };
+      }
       console.info("[ekatva link] asking the rendezvous where the laptop is");
       await this.d.ntfy.publish(mb.topic, mb.seal({ t: "where", at: this.now(), n }));
       const until = this.now() + (this.d.rendezvousWaitMs ?? 45_000);
@@ -495,7 +545,8 @@ export class LinkManager {
         if (near) return { url: laptop.url, lan: [near] };
         for (const m of await this.d.ntfy.poll(mb.topic, "5m")) {
           const msg = mb.open(m.message, this.now());
-          if (msg?.t === "here" && msg.n === n) return { url: msg.url, lan: msg.lan };
+          if (msg?.t === "here" && (msg.n === n || (msg.n === ANNOUNCE && msg.url !== laptop.url)))
+            return { url: msg.url, lan: msg.lan };
         }
       }
     } catch (e) {
@@ -549,10 +600,18 @@ export class LinkManager {
     });
     const client = createTRPCClient<LaptopRouter>({ links: [wsLink({ client: wsClient })] });
     this.client = client;
+    // Keep the laptop's route (its tunnel's URL) up to date while linked,
+    // on the same Wi-Fi too: leaving it, the phone comes back through the
+    // tunnel by itself, no QR. An older laptop has no link.watch: no matter.
+    const route = client.link.watch.subscribe(undefined, {
+      onData: (r) => void this.onRoute(laptop.key, r),
+      onError: () => undefined,
+    });
     let stopped = false;
     const cleanup = () => {
       if (stopped) return;
       stopped = true;
+      route.unsubscribe();
       stopServing();
       void wsClient.close();
     };
@@ -575,6 +634,26 @@ export class LinkManager {
         this.scheduleRetry(laptop.key, reason === "bye" ? null : reason);
       }
     });
+  }
+
+  /** The laptop's route changed (or the link just came up): save it. */
+  private async onRoute(key: string, r: Route): Promise<void> {
+    const l = this.d.laptops.get(key);
+    if (!l) return;
+    const lan = [...l.lan, ...r.lan.filter((a) => !l.lan.includes(a))].slice(0, 4);
+    // A tunnel restarting has no URL for a moment: keep the last one until a new one comes.
+    const url = r.url ?? (r.tunnel.state === "starting" ? l.url : null);
+    const away: LaptopRecord["away"] = {
+      state: r.tunnel.state,
+      kind: r.tunnel.kind,
+      problem: r.tunnel.problem,
+      at: this.now(),
+    };
+    if (url !== l.url)
+      console.info(
+        `[ekatva link] ${url ? "learnt the laptop's tunnel" : "the laptop's tunnel is off"}`,
+      );
+    await this.d.laptops.update(key, { lan, url, away });
   }
 
   /** Forget a laptop on this phone. */
