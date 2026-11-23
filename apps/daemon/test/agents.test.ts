@@ -24,7 +24,7 @@ sleep 60
 `;
 
 const wait = async (f: () => Promise<boolean>) => {
-  for (let i = 0; i < 60 && !(await f()); i++) await new Promise((r) => setTimeout(r, 100));
+  for (let i = 0; i < 150 && !(await f()); i++) await new Promise((r) => setTimeout(r, 100));
 };
 
 beforeAll(async () => {

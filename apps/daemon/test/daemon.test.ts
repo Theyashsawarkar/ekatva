@@ -1,6 +1,9 @@
+import { spawn } from "node:child_process";
 import * as fs from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { fileURLToPath } from "node:url";
+import { connectApp } from "@ekatva/app";
 import {
   connect,
   generateKeyPair,
@@ -216,6 +219,88 @@ describe("the daemon, end to end", () => {
     expect(change?.summary).toMatch(/no longer: files/);
     await local.journal.undo.mutate({ seq: change!.seq });
     expect((await p.client.files.list.query({ path: "~" })).length).toBeGreaterThan(0);
+  });
+
+  it("lets the phone reach a laptop app, only with that app's grant, and logs it", async () => {
+    const echo = connectApp(
+      {
+        id: "echo",
+        name: "Echo",
+        version: "1",
+        methods: [{ name: "say", why: "Says it back" }],
+      },
+      { socket: join(root, "ekatva.sock") },
+    ).on("say", (input, from) => ({ said: input, to: from.name }));
+    for (let i = 0; i < 100; i++) {
+      if ((await local.apps.list.query()).some((a) => a.id === "echo" && a.online)) break;
+      await new Promise((r) => setTimeout(r, 20));
+    }
+    const say = () => p.client.apps.invoke.mutate({ app: "echo", method: "say", input: "hi" });
+    // Neither "apps" nor "app:echo": refused.
+    await expect(say()).rejects.toMatchObject({ data: { code: "FORBIDDEN" } });
+    await local.admin.devices.grant.mutate({
+      key: "Pixel 8",
+      grants: ["status", "journal", "apps"],
+    });
+    await expect(say()).rejects.toThrow(`this device may not use the app "echo"`);
+    await local.admin.devices.grant.mutate({
+      key: "Pixel 8",
+      grants: ["status", "journal", "apps", "app:echo"],
+    });
+    expect(await say()).toEqual({ said: "hi", to: "Pixel 8" });
+    expect(await p.client.apps.list.query()).toEqual([
+      expect.objectContaining({ id: "echo", online: true, granted: true, side: "laptop" }),
+    ]);
+    const app = (await local.apps.list.query()).find((a) => a.id === "echo");
+    expect(app?.grantedTo).toHaveLength(1);
+    const log = await local.admin.log.list.query({ host: "self" });
+    expect(log.findLast((e) => e.action === "apps.invoke")).toMatchObject({
+      ok: true,
+      summary: "Echo: say",
+      actor: { name: "Pixel 8" },
+    });
+    // It stops: the phone hears so in words, at once.
+    echo.close();
+    for (let i = 0; i < 100; i++) {
+      if (!(await local.apps.list.query()).some((a) => a.id === "echo" && a.online)) break;
+      await new Promise((r) => setTimeout(r, 20));
+    }
+    await expect(say()).rejects.toThrow("Echo isn't running on the laptop");
+  });
+
+  it("reaches a laptop app written in Python (clients/python), and its events too", async () => {
+    const script = fileURLToPath(new URL("../../../examples/echo/echo.py", import.meta.url));
+    const py = spawn("python3", [script], {
+      env: { ...process.env, EKATVA_SOCKET: join(root, "ekatva.sock"), ECHO_ID: "echo-py" },
+      stdio: ["ignore", "pipe", "pipe"],
+    });
+    let out = "";
+    py.stdout.on("data", (d) => {
+      out += d;
+    });
+    closers.push(() => py.kill());
+    for (let i = 0; i < 200 && !out.includes("registered"); i++)
+      await new Promise((r) => setTimeout(r, 20));
+    expect(out).toContain("echo: registered");
+    await local.admin.devices.grant.mutate({
+      key: "Pixel 8",
+      grants: ["status", "journal", "apps", "app:echo-py"],
+    });
+    expect(
+      await p.client.apps.invoke.mutate({ app: "echo-py", method: "say", input: [1, "two"] }),
+    ).toEqual({ said: [1, "two"], to: "Pixel 8", by: "python" });
+    await p.client.apps.emit.mutate({ app: "echo-py", name: "note", data: "hello laptop" });
+    for (let i = 0; i < 100 && !out.includes("hello laptop"); i++)
+      await new Promise((r) => setTimeout(r, 20));
+    expect(out).toContain("echo: a note from Pixel 8: hello laptop");
+    // A method it doesn't have, and one marked log: false stays out of the log.
+    await expect(
+      p.client.apps.invoke.mutate({ app: "echo-py", method: "fly", input: null }),
+    ).rejects.toThrow(`Echo has no "fly" on the laptop`);
+    const before = (await local.admin.log.list.query({ host: "self" })).length;
+    await p.client.apps.invoke.mutate({ app: "echo-py", method: "time", input: null });
+    expect((await local.admin.log.list.query({ host: "self" })).length).toBe(before);
+    py.kill();
   });
 
   it("asks the phone to act, and mirrors the phone's log", async () => {

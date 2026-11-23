@@ -142,6 +142,11 @@ anything but ciphertext.
   again. What a phone may do is chosen per capability on the laptop.
 - **Every action logged, everything undoable.** See
   [The action log](#the-action-log).
+- **The road for every Vayu app.** A laptop app registers with ekatva and
+  phones reach it over the same encrypted link, each app only with its own
+  `app:<id>` grant, every call logged: no pairing, tunnel or keys of its own
+  ([Apps through ekatva](https://theyashsawarkar.github.io/ekatva/features/apps/)).
+  The phone's half is being built.
 - **Built to grow.** Every feature is a *capability*: one module on each
   side behind one typed contract. Adding one doesn't touch the others; see
   [Adding a feature](#adding-a-feature).
@@ -262,7 +267,12 @@ apps/
 packages/
   protocol/    the contract: tRPC routers' types and zod schemas, shared by all
   link/        Noise handshake, encrypted socket, pairing, QR payload
+  app/         @ekatva/app: for a laptop app in TypeScript to talk through ekatva
   config/      tsconfig
+clients/
+  python/      ekatva_app.py: the same for a laptop app in Python (one file, stdlib only)
+examples/
+  echo/        the smallest laptop app on ekatva
 ```
 
 The laptop's window is a [Vyom](https://github.com/Theyashsawarkar/vyom) popup in

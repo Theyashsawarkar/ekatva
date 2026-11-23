@@ -6,7 +6,17 @@ mailbox) and milestone 2 done in a simpler form (the pairing QR is also the
 "connect from anywhere" QR: a paired phone that scans it just connects and
 keeps the route; and the phone learns the route over the link itself, on
 the same Wi-Fi, through `link.watch`). Not yet: a stable named tunnel,
-make-before-break, push wake-ups. Two pieces of work, in this order:
+make-before-break, push wake-ups. 2026-11-23: the hub (part 2) is being
+built, decided as: the **daemon** is the laptop's hub and Darpaṇa its UI;
+phone apps are **approved once each** and pinned to their signing
+certificate; **nāda** is the first app. Milestone 1 done: the laptop's half
+(`apps.register`/`invoke`/`emit`, `app:<id>` grants, the Python and TS
+clients, `ekatva apps`, the echo example; the website's "Apps through
+ekatva"). Calls cross the link as `apps.invoke` (tRPC reserves `call`).
+A laptop app isn't pinned to its executable: the local socket is yours
+alone and anything running as you could grant itself anything anyway, so
+the per-phone `app:<id>` grant is the line that matters there. Next: the
+phone's half, Darpaṇa's Apps page, nāda. Two pieces of work, in this order:
 
 1. **Always linked.** Once paired, the phone and the laptop reach each other
    from anywhere, through a secure tunnel the laptop sets up by itself, and

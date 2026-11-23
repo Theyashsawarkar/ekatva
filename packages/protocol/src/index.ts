@@ -1,4 +1,5 @@
 export * from "./appearance.js";
+export * from "./apps.js";
 export * from "./capabilities.js";
 export * from "./files.js";
 export * from "./journal.js";

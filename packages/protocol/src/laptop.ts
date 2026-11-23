@@ -7,6 +7,18 @@
 import { TRPCError } from "@trpc/server";
 import { z } from "zod";
 import { type Appearance, AppearanceMode } from "./appearance.js";
+import {
+  AppCall,
+  AppEvent,
+  type AppFrom,
+  type AppIncoming,
+  type AppInfo,
+  AppManifest,
+  type AppOutcome,
+  AppReply,
+  appGrant,
+  type LaptopApp,
+} from "./apps.js";
 import { CAPABILITIES, type Capability, PRESETS } from "./capabilities.js";
 import { type Done, type FileService, filesRouter } from "./files.js";
 import { journalRouter, type Undoer } from "./journalRouter.js";
@@ -424,6 +436,13 @@ export interface LaptopServices {
   };
   /** Events the phone reports (its notifications, calls, messages, battery). */
   phoneEvent(from: string, e: PhoneEvent): Promise<void>;
+  /** The laptop's Vayu apps, for a phone (each reached only with its `app:<id>` grant). */
+  apps: {
+    /** `granted`: whether the asking device holds an app's grant. */
+    list(granted: (id: string) => boolean): Promise<AppInfo[]>;
+    call(from: AppFrom, call: AppCall): Promise<AppOutcome<unknown>>;
+    emit(from: AppFrom, event: AppEvent): Promise<AppOutcome<null>>;
+  };
   undo: Undoer;
 }
 
@@ -521,6 +540,20 @@ export interface LocalServices {
     /** "self" for this laptop's log, or a device's key for its mirrored log. */
     list(host: string, after: number, limit: number): Promise<import("./journal.js").Entry[]>;
     check(): Promise<{ host: string; name: string; seq: number; problem: string | null }[]>;
+  };
+  /** This laptop's Vayu apps: they register here, and reach the phone's apps. */
+  apps: {
+    /** Registers an app while the subscription lasts; yields what it receives. */
+    register(manifest: AppManifest, signal: AbortSignal | undefined): AsyncIterable<AppIncoming>;
+    /** An app's answer to a call it received. */
+    reply(reply: AppReply): Promise<void>;
+    /** Laptop apps (online or seen), with the phones granted each. */
+    list(): Promise<LaptopApp[]>;
+    /** Call a phone's app (`device` null: the phone connected last). */
+    call(device: string | null, from: string, call: AppCall): Promise<unknown>;
+    emit(device: string | null, from: string, event: AppEvent): Promise<null>;
+    /** A phone's apps, as it reports them. */
+    phoneApps(device: string | null): Promise<AppInfo[]>;
   };
   /** Ask a phone to do something (it checks its own grants and logs it too). */
   phone(
@@ -898,6 +931,42 @@ function capOf(action: string): Capability | undefined {
   return proc?._def.meta?.cap;
 }
 
+/** The laptop's apps, for a phone: each one needs its own `app:<id>` grant too. */
+const allowedApp = (ctx: LaptopContext, id: string) => {
+  if (!ctx.grants.has(appGrant(id)))
+    throw new TRPCError({
+      code: "FORBIDDEN",
+      message: `this device may not use the app "${id}" (grant app:${id})`,
+    });
+};
+const from = (ctx: LaptopContext): AppFrom => ({ key: ctx.actor.key, name: ctx.actor.name });
+const logged = <T>(ctx: unknown, o: AppOutcome<T>): T => {
+  const a = act(ctx);
+  a.summary = o.summary;
+  if (!o.log) a.quiet = true;
+  return o.value;
+};
+
+const apps = api.router({
+  list: p
+    .meta({ cap: "apps" })
+    .query(({ ctx }) => ctx.services.apps.list((id) => ctx.grants.has(appGrant(id)))),
+  invoke: p
+    .meta({ cap: "apps" })
+    .input(AppCall)
+    .mutation(async ({ ctx, input }) => {
+      allowedApp(ctx, input.app);
+      return logged(ctx, await ctx.services.apps.call(from(ctx), input));
+    }),
+  emit: p
+    .meta({ cap: "apps" })
+    .input(AppEvent)
+    .mutation(async ({ ctx, input }) => {
+      allowedApp(ctx, input.app);
+      return logged(ctx, await ctx.services.apps.emit(from(ctx), input));
+    }),
+});
+
 const link = api.router({
   route: p.meta({ cap: "status" }).query(({ ctx }) => ctx.services.link.route()),
   watch: p
@@ -922,6 +991,7 @@ export const laptopRouter = api.router({
   terminal,
   share: shareRouter(api, "share", (ctx) => ctx.services.share),
   inbox,
+  apps,
 });
 
 export type LaptopRouter = typeof laptopRouter;
@@ -1030,9 +1100,60 @@ const admin = api.router({
 });
 
 /**
- * What the local socket serves: the laptop's API (as this laptop's own
- * user, with every capability) and `admin`.
+ * This laptop's own Vayu apps, on the local socket: they register to be
+ * reached from the phone, answer calls, and reach the phone's apps.
  */
-export const localRouter = api.router({ ...laptopRouter._def.record, admin });
+const localApps = api.router({
+  /** Stay registered while subscribed: every call and event for this app arrives here. */
+  register: p
+    .meta({ cap: "admin" })
+    .input(AppManifest)
+    .subscription(({ ctx, input, signal }) => stream(local(ctx).apps.register(input, signal))),
+  reply: p
+    .meta({ cap: "admin", record: false })
+    .input(AppReply)
+    .mutation(async ({ ctx, input }) => {
+      await local(ctx).apps.reply(input);
+      return null;
+    }),
+  list: p.meta({ cap: "admin" }).query(({ ctx }) => local(ctx).apps.list()),
+  /** A phone's apps (`device` null: the phone connected last). */
+  phone: p
+    .meta({ cap: "admin" })
+    .input(z.object({ device: z.string().nullable().default(null) }))
+    .query(({ ctx, input }) => local(ctx).apps.phoneApps(input.device)),
+  invoke: p
+    .meta({ cap: "admin", record: false })
+    .input(AppCall.extend({ device: z.string().nullable().default(null) }))
+    .mutation(({ ctx, input }) =>
+      local(ctx).apps.call(input.device, ctx.actor.name, {
+        app: input.app,
+        method: input.method,
+        input: input.input,
+      }),
+    ),
+  emit: p
+    .meta({ cap: "admin", record: false })
+    .input(AppEvent.extend({ device: z.string().nullable().default(null) }))
+    .mutation(({ ctx, input }) =>
+      local(ctx).apps.emit(input.device, ctx.actor.name, {
+        app: input.app,
+        name: input.name,
+        data: input.data,
+        keep: input.keep,
+      }),
+    ),
+});
+
+/**
+ * What the local socket serves: the laptop's API (as this laptop's own
+ * user, with every capability), `admin`, and `apps` for this laptop's own
+ * apps (in place of the phone's view of them).
+ */
+export const localRouter = api.router({
+  ...laptopRouter._def.record,
+  apps: localApps,
+  admin,
+});
 export type LocalRouter = typeof localRouter;
 export const createLaptopCaller = api.createCallerFactory(laptopRouter);

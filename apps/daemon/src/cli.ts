@@ -34,7 +34,8 @@ const HELP = `ekatva ${VERSION}: your phone and your laptop as one device
                                   works from any network (--lan: this Wi-Fi only;
                                   --window: in an image window, for terminals that blur it)
   ekatva devices                  paired phones, online or not
-  ekatva grant DEVICE WHAT        what a phone may do: a preset or capabilities
+  ekatva grant DEVICE WHAT        what a phone may do: a preset or capabilities (all of it);
+                                  +WHAT / -WHAT adds or removes one (+app:nada: an app)
   ekatva unpair DEVICE            forget a phone (undoable)
   ekatva log [DEVICE] [-n N]      the action log (this laptop's, or a phone's copy)
   ekatva undo N                   undo entry #N of this laptop's log
@@ -49,6 +50,9 @@ const HELP = `ekatva ${VERSION}: your phone and your laptop as one device
   ekatva call [hangup|--waybar]   the phone's call now (or hang it up; --waybar: a bar capsule)
   ekatva status [--json|--waybar]
   ekatva agents                   AI agent sessions in tmux
+  ekatva apps                     Vayu apps that talk through ekatva: the laptop's, the phone's
+  ekatva apps call APP METHOD [JSON] [--device D]
+                                  call the phone's app (as this laptop)
   ekatva window [PLACE]           open the window: overview, messages, calls, files, log, devices, pair
   ekatva daemon                   run the service (systemd does this)
   ekatva mcp                      an MCP server on stdio, for AI agents (EKATVA_AGENT=name)
@@ -379,10 +383,25 @@ async function main(argv: string[]): Promise<void> {
       case "grant": {
         const [device, ...what] = rest;
         if (!device || !what.length) fail("usage: ekatva grant DEVICE PRESET|CAPABILITY…");
-        const grants =
-          what.length === 1 && what[0] && what[0] in PRESETS
-            ? [...PRESETS[what[0] as Preset]]
-            : what.flatMap((w) => w.split(","));
+        const items = what.flatMap((w) => w.split(",")).filter(Boolean);
+        let grants: string[];
+        if (items.every((w) => w.startsWith("+") || w.startsWith("-"))) {
+          // +x / -x: change the phone's grants, keeping the rest.
+          const d = (await api.admin.devices.list.query()).find(
+            (x) => x.key === device || x.name.toLowerCase() === device.toLowerCase(),
+          );
+          if (!d) fail(`no paired phone "${device}"; see ekatva devices`);
+          const set = new Set(d.grants);
+          for (const w of items) {
+            if (w.startsWith("+")) set.add(w.slice(1));
+            else set.delete(w.slice(1));
+          }
+          grants = [...set];
+        } else
+          grants =
+            items.length === 1 && items[0] && items[0] in PRESETS
+              ? [...PRESETS[items[0] as Preset]]
+              : items;
         const d = await api.admin.devices.grant.mutate({ key: device, grants });
         process.stdout.write(`${d.name} may: ${d.grants.join(", ") || "nothing"}\n`);
         break;
@@ -544,6 +563,50 @@ async function main(argv: string[]): Promise<void> {
             process.stdout.write(
               `      ? ${a.question.text}  ${a.question.options.map((o) => `[${o.key}] ${o.label}`).join("  ")}\n`,
             );
+        }
+        break;
+      }
+      case "apps": {
+        if (rest[0] === "call") {
+          const [, app, method, json] = rest;
+          if (!app || !method) fail("usage: ekatva apps call APP METHOD [JSON] [--device D]");
+          let input: unknown = null;
+          if (json && !json.startsWith("--")) {
+            try {
+              input = JSON.parse(json);
+            } catch {
+              fail("the input isn't JSON (quote it: '{\"a\":1}')");
+            }
+          }
+          const out = await api.apps.invoke.mutate({
+            app,
+            method,
+            input,
+            device: flag("--device") ?? null,
+          });
+          process.stdout.write(`${JSON.stringify(out, null, 2)}\n`);
+          break;
+        }
+        const names = new Map((await api.admin.devices.list.query()).map((d) => [d.key, d.name]));
+        const laptop = await api.apps.list.query();
+        process.stdout.write("On this laptop\n");
+        if (!laptop.length) process.stdout.write("  none yet (an app appears once it registers)\n");
+        for (const a of laptop) {
+          const who = a.grantedTo.map((k) => names.get(k) ?? k.slice(0, 8)).join(", ");
+          process.stdout.write(
+            `  ${a.online ? "●" : "○"} ${a.name} (${a.id} ${a.version})  ${who ? `reachable from: ${who}` : `no phone may reach it (ekatva grant PHONE +apps +app:${a.id})`}\n`,
+          );
+        }
+        try {
+          const phone = await api.apps.phone.query({ device: flag("--device") ?? null });
+          process.stdout.write("On the phone\n");
+          if (!phone.length) process.stdout.write("  none yet\n");
+          for (const a of phone)
+            process.stdout.write(
+              `  ${a.online ? "●" : "○"} ${a.name} (${a.id} ${a.version})${a.granted ? "" : "  (this laptop may not reach it)"}\n`,
+            );
+        } catch (e) {
+          process.stdout.write(`On the phone: ${(e as Error).message}\n`);
         }
         break;
       }

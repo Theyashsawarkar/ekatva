@@ -1,12 +1,12 @@
 /** Paired devices and what each may do: devices.json in the state dir, 0600. */
 import { mkdir, readFile, rename, writeFile } from "node:fs/promises";
 import { dirname } from "node:path";
-import { type Capability, grantable } from "@ekatva/protocol";
+import { type AppGrant, type Capability, grantable } from "@ekatva/protocol";
 
 export interface DeviceRecord {
   key: string;
   name: string;
-  grants: Capability[];
+  grants: (Capability | AppGrant)[];
   pairedAt: number;
   lastSeen: number | null;
   info: Record<string, string>;
@@ -36,7 +36,7 @@ export class Devices {
   }
 
   /** A live view of a device's grants: a revocation applies to its next call. */
-  grantsOf(key: string): { has(c: Capability): boolean } {
+  grantsOf(key: string): { has(c: Capability | AppGrant): boolean } {
     return { has: (c) => this.get(key)?.grants.includes(c) ?? false };
   }
 

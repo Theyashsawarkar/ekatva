@@ -3,6 +3,8 @@
  * adds a capability here; it is off on every existing pairing until you
  * grant it.
  */
+import { type AppGrant, isAppGrant } from "./apps.js";
+
 export const CAPABILITIES = {
   // ---- on the laptop, asked by the phone
   status: {
@@ -90,6 +92,12 @@ export const CAPABILITIES = {
     title: "Approve root",
     detail: "dvarapala and polkit prompts, with your password typed on the phone",
   },
+  apps: {
+    side: "laptop",
+    risk: "medium",
+    title: "Your laptop apps",
+    detail: "talk to Vayu apps on the laptop (nāda…), each one only with its own app: grant",
+  },
   journal: {
     side: "laptop",
     risk: "medium",
@@ -153,6 +161,12 @@ export const CAPABILITIES = {
     title: "Send files and links to the phone",
     detail: "files land in Download/ekatva, links open, text on the clipboard",
   },
+  "phone.apps": {
+    side: "phone",
+    risk: "medium",
+    title: "The phone's apps",
+    detail: "talk to Vayu apps on the phone (nāda…), each one only with its own app: grant",
+  },
   "phone.journal": {
     side: "phone",
     risk: "medium",
@@ -175,9 +189,11 @@ export const ALL = (Object.keys(CAPABILITIES) as Capability[]).filter((c) => c !
 /** What this laptop's own user may do: everything. */
 export const LOCAL = Object.keys(CAPABILITIES) as Capability[];
 
-/** Keeps only real, grantable capabilities. */
-export function grantable(list: readonly string[]): Capability[] {
-  return [...new Set(list)].filter((c): c is Capability => isCapability(c) && c !== "admin");
+/** Keeps only real, grantable capabilities, and apps' grants ("app:nada"). */
+export function grantable(list: readonly string[]): (Capability | AppGrant)[] {
+  return [...new Set(list)].filter(
+    (c): c is Capability | AppGrant => (isCapability(c) && c !== "admin") || isAppGrant(c),
+  );
 }
 
 export const PRESETS = {

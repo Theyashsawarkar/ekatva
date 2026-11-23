@@ -1,0 +1,30 @@
+{
+  "name": "@ekatva/app",
+  "version": "0.1.1",
+  "private": true,
+  "description": "For a laptop app to talk to phone apps through ekatva: register, answer calls, take events, reach the phone.",
+  "type": "module",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "default": "./dist/index.js"
+    }
+  },
+  "scripts": {
+    "build": "tsc -p tsconfig.json",
+    "typecheck": "tsc -p tsconfig.json --noEmit",
+    "test": "vitest run --passWithNoTests"
+  },
+  "dependencies": {
+    "@ekatva/protocol": "workspace:*",
+    "@trpc/client": "11.19.0",
+    "ws": "8.22.0"
+  },
+  "devDependencies": {
+    "@ekatva/config": "workspace:*",
+    "@types/node": "26.6.5",
+    "@types/ws": "8.18.2",
+    "typescript": "7.0.2",
+    "vitest": "5.0.5"
+  }
+}

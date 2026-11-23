@@ -24,6 +24,7 @@ export default defineConfig({
           label: "Features",
           items: [
             "features/agents",
+            "features/apps",
             "features/files",
             "features/jyoti",
             "features/media",

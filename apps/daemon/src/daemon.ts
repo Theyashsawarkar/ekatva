@@ -27,6 +27,8 @@ import {
   webSocketTransport,
 } from "@ekatva/link";
 import {
+  type AppInfo,
+  appGrant,
   type Capability,
   channelWebSocket,
   type Device,
@@ -58,6 +60,7 @@ import { type DeviceRecord, Devices } from "./devices.js";
 import { FileStore } from "./journalFile.js";
 import { AgentsService, type Tmux } from "./services/agents.js";
 import { type AppearanceHost, AppearanceService } from "./services/appearance.js";
+import { AppsService } from "./services/apps.js";
 import { BeaconSender, VIRTUAL } from "./services/beacon.js";
 import { CallState } from "./services/calls.js";
 import { ClipboardSync } from "./services/clipboardSync.js";
@@ -211,6 +214,8 @@ export class Daemon {
   readonly calls = new CallState();
   readonly appearance: AppearanceService;
   readonly agents: AgentsService;
+  /** This laptop's Vayu apps, and how phones reach them. */
+  readonly apps: AppsService;
   readonly system: SystemService;
   readonly media: MediaService;
   readonly root: RootBridge;
@@ -242,6 +247,7 @@ export class Daemon {
     this.jyoti = new JyotiService(o.jyotiHost, join(o.stateDir, "jyoti.json"));
     this.appearance = new AppearanceService(o.appearanceHost);
     this.agents = new AgentsService(o.tmux, o.config.agents.roots);
+    this.apps = new AppsService(join(o.stateDir, "apps.json"), (m) => this.log(m));
     this.media = new MediaService(o.mediaHost);
     this.input = new InputService(o.inputRunner);
     this.terminal = new TerminalService(o.tmux);
@@ -308,6 +314,7 @@ export class Daemon {
 
   async start(): Promise<void> {
     await this.devices.load();
+    await this.apps.load();
     const self = await FileStore.open(join(this.o.stateDir, "journal", "self.jsonl"));
     this.stores.push(self);
     this.journal = new Journal(self, this.id);
@@ -454,6 +461,7 @@ export class Daemon {
     this.media.stop();
     this.jyoti.shutdown();
     this.agents.shutdown();
+    this.apps.shutdown();
     await new Promise<void>((r) => (this.wss ? this.wss.close(() => r()) : r()));
     await new Promise<void>((r) => (this.http ? this.http.close(() => r()) : r()));
     for (const c of this.localWss?.clients ?? []) c.terminate();
@@ -821,6 +829,11 @@ export class Daemon {
         if (this.bridge && e.kind !== "battery") await this.bridge.fromPhoneEvent(from, name, e);
         else await this.system.showPhoneEvent(name, e);
       },
+      apps: {
+        list: async (granted) => this.apps.list(granted),
+        call: (from, c) => this.apps.call(from, c),
+        emit: (from, e) => this.apps.emit(from, e),
+      },
       undo: (u) => this.undo(u),
     };
   }
@@ -1068,6 +1081,24 @@ export class Daemon {
         }
         return out;
       },
+    },
+    apps: {
+      register: (manifest, signal) => this.apps.register(manifest, signal),
+      reply: (r) => this.apps.reply(r),
+      list: async () =>
+        this.apps.laptopApps((id) =>
+          this.devices
+            .all()
+            .filter((d) => d.grants.includes(appGrant(id)))
+            .map((d) => d.key),
+        ),
+      call: (device, _from, c) => this.localServices.phone(device, "mutation", "apps.invoke", c),
+      emit: async (device, _from, e) => {
+        await this.localServices.phone(device, "mutation", "apps.emit", e);
+        return null;
+      },
+      phoneApps: async (device) =>
+        (await this.localServices.phone(device, "query", "apps.list", undefined)) as AppInfo[],
     },
     phone: async (keyOrName, type, path, input) => {
       const online = [...this.peers.values()];

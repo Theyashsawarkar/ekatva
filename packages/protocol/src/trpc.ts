@@ -5,6 +5,7 @@
  * (reading a file is worth knowing about; polling the battery isn't).
  */
 import { initTRPC, TRPCError } from "@trpc/server";
+import type { AppGrant } from "./apps.js";
 import type { Capability } from "./capabilities.js";
 import type { Actor, Journal, Undo } from "./journal.js";
 
@@ -44,13 +45,15 @@ export interface Act {
   summary?: string;
   undo?: Undo;
   undoes?: number;
+  /** Leave this one out of the log (an app's method its manifest marks `log: false`). */
+  quiet?: boolean;
 }
 
 export interface BaseContext {
   /** Who is asking. */
   actor: Actor;
   /** Read on every call, so a revoked grant stops the very next one. */
-  grants: { has(c: Capability): boolean };
+  grants: { has(c: Capability | AppGrant): boolean };
   journal: Journal;
 }
 
@@ -93,7 +96,7 @@ export function createApi<Ctx extends BaseContext>() {
       throw new TRPCError({ code: "FORBIDDEN", message: `this device may not use "${meta.cap}"` });
     }
     const result = await next({ ctx: { act } });
-    if (log) {
+    if (log && !act.quiet) {
       const input = await getRawInput().catch(() => undefined);
       const error = result.ok ? undefined : result.error.message;
       await ctx.journal.record({
