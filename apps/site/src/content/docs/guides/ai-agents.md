@@ -25,7 +25,7 @@ Any other MCP client: run `ekatva mcp` as a stdio server. Set
 (`yash via claude`); it is a label, not a password.
 
 An agent without MCP can use the command line instead (`ekatva status`,
-`ekatva log`, ...); see [the CLI](/ekatva/reference/cli/).
+`ekatva log`, ...); see [the CLI](/reference/cli/).
 
 ## Tools
 
@@ -49,7 +49,7 @@ An agent without MCP can use the command line instead (`ekatva status`,
   open an **Allow / Decline** dialog on the laptop with the number and the
   text (needs `zenity`). Closing it, or two minutes without an answer, is
   a no.
-- **Everything is logged** in the [action log](/ekatva/features/action-log/)
+- **Everything is logged** in the [action log](/features/action-log/)
   under the agent's name, and most of it can be undone (`ekatva undo N`).
 - **The phone's grants still apply**: an agent can only do what you let the
   phone do (`ekatva grant`).

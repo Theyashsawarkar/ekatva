@@ -36,8 +36,8 @@ and restart Vyom (`systemctl --user restart vyom`). Open it with `vyom darpana` 
 
 The daemon listens on port 47100 on your local network. Paired phones on the
 same network find it by its **beacon**: a small encrypted UDP message on port
-47101 that only they can read (see [On the same network](/ekatva/start/pairing/#on-the-same-network)).
-Nothing gets in without a paired key; see [the security model](/ekatva/security/model/).
+47101 that only they can read (see [On the same network](/start/pairing/#on-the-same-network)).
+Nothing gets in without a paired key; see [the security model](/security/model/).
 
 If a firewall drops incoming connections (ufw does by default), let local
 networks in, and only them. `ekatva status` and the window tell you when it's

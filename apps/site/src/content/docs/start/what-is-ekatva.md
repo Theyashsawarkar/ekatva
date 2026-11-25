@@ -32,5 +32,5 @@ sharing one typed contract, so the phone and the laptop can't drift apart.
 Built and tested today: the encrypted link and pairing, the protocol (capabilities,
 tRPC both ways, the action log with undo), and the daemon (files with undo,
 jyoti (Akhaṇḍa and Nandādīpa), agents, the CLI). Being built: the phone app, the
-desktop window, the tunnel. See the [changelog](/ekatva/reference/changelog/).
+desktop window, the tunnel. See the [changelog](/reference/changelog/).
 :::

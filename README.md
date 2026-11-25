@@ -19,7 +19,7 @@
 </p>
 
 <p align="center">
-  <a href="https://theyashsawarkar.github.io/ekatva/"><b>Website and documentation</b></a>
+  <a href="https://ekatva.theyashsawarkar.dev/"><b>Website and documentation</b></a>
 </p>
 
 <p align="center">
@@ -76,7 +76,7 @@ anything but ciphertext.
   ring or lock it, read SMS, use its clipboard and files. Sending an SMS
   or placing a call waits for you to allow it on the laptop; everything is
   in the action log under the agent's name.
-  [For AI agents](https://theyashsawarkar.github.io/ekatva/guides/ai-agents/).
+  [For AI agents](https://ekatva.theyashsawarkar.dev/guides/ai-agents/).
 
 ### From the phone, on the laptop
 
@@ -145,7 +145,7 @@ anything but ciphertext.
 - **The road for every Vayu app.** A laptop app registers with ekatva and
   phones reach it over the same encrypted link, each app only with its own
   `app:<id>` grant, every call logged: no pairing, tunnel or keys of its own
-  ([Apps through ekatva](https://theyashsawarkar.github.io/ekatva/features/apps/)).
+  ([Apps through ekatva](https://ekatva.theyashsawarkar.dev/features/apps/)).
   The phone's half is being built.
 - **Built to grow.** Every feature is a *capability*: one module on each
   side behind one typed contract. Adding one doesn't touch the others; see
@@ -302,7 +302,7 @@ adb install -r apps/mobile/dist/ekatva.apk
 A feature is a **capability**: one name, one router in `packages/protocol`,
 one handler module on the side that does it, and a screen on the side that
 asks for it. Capabilities are what a phone is granted, so a new one is off
-until you allow it. The [guide on the website](https://theyashsawarkar.github.io/ekatva/guides/capabilities/)
+until you allow it. The [guide on the website](https://ekatva.theyashsawarkar.dev/guides/capabilities/)
 walks through one end to end.
 
 ## Status
@@ -317,7 +317,7 @@ walks through one end to end.
 | Media: players, volume, brightness | done, tested |
 | Screen and input | planned |
 | Laptop window ([Vyom popup](https://github.com/Theyashsawarkar/darpana)) | done: the phone at a glance, messages, calls, files, the log, devices and pairing |
-| Website and documentation | done: [theyashsawarkar.github.io/ekatva](https://theyashsawarkar.github.io/ekatva/) |
+| Website and documentation | done: [ekatva.theyashsawarkar.dev](https://ekatva.theyashsawarkar.dev/) |
 | Phone app | core done and tested against the daemon; screens done; first device build next |
 | Calls, SMS, notifications, lock (native module) | built; first device test next |
 | Root approvals from the phone (dvarapala) | done, tested; polkit (pramana) next |

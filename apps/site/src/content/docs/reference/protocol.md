@@ -8,7 +8,7 @@ description: "The link, the ports, and the APIs."
 1. **WebSocket** to `/link` on the laptop (port 47100), directly or through a
    tunnel.
 2. **Noise XX**, then encrypted frames: `[port][flags][payload]`. See
-   [cryptography](/ekatva/security/crypto/).
+   [cryptography](/security/crypto/).
 3. **Ports**: `0` control (decision, keepalive), `1` the laptop's API, `2` the
    phone's API, higher ports for streams.
 4. **tRPC v11** on ports 1 and 2: queries, mutations, subscriptions. Both sides
