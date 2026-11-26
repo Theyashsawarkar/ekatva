@@ -1,0 +1,15 @@
+[Unit]
+Description=ekatva: AI agents' MCP socket (pranali)
+Documentation=https://ekatva.theyashsawarkar.dev/guides/ai-agents/
+
+# Held by systemd, not the daemon: agents' connections wait in its backlog
+# while ekatva.service restarts (an update) instead of failing, and a
+# connection starts the service when it isn't running.
+[Socket]
+ListenStream=%t/ekatva/mcp.sock
+SocketMode=0600
+DirectoryMode=0700
+Service=ekatva.service
+
+[Install]
+WantedBy=sockets.target

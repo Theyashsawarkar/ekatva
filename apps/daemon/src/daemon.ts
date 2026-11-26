@@ -5,7 +5,7 @@
  */
 import { execFile } from "node:child_process";
 import { randomBytes } from "node:crypto";
-import { chmodSync, existsSync, mkdirSync, renameSync, rmSync } from "node:fs";
+import { chmodSync, existsSync, renameSync, rmSync } from "node:fs";
 import { mkdir, readFile, writeFile } from "node:fs/promises";
 import { createServer, type Server } from "node:http";
 import { createServer as createNetServer, type Server as NetServer, type Socket } from "node:net";
@@ -69,6 +69,18 @@ import { type WebSocket, WebSocketServer } from "ws";
 import type { Config } from "./config.js";
 import { type DeviceRecord, Devices } from "./devices.js";
 import { FileStore } from "./journalFile.js";
+import type { Approve, StreamSession } from "./mcp.js";
+import {
+  displayEnv,
+  HELLO_MAX,
+  HELLO_OK,
+  HELLO_TIMEOUT_MS,
+  type Hello,
+  helloRefused,
+  parseHello,
+  prepareSocketDir,
+  socketIsDead,
+} from "./mcpSocket.js";
 import { AgentsService, type Tmux } from "./services/agents.js";
 import { type AppearanceHost, AppearanceService } from "./services/appearance.js";
 import { AppsService } from "./services/apps.js";
@@ -107,12 +119,23 @@ export interface DaemonOptions {
   stateDir: string;
   socketPath: string;
   /**
-   * The MCP socket: one agent session per connection (`ekatva-rs mcp`).
+   * The MCP socket: one agent session per connection (`pranali ekatva`).
    * Default: `ekatva/mcp.sock` beside socketPath; null: none.
    */
   mcpSocketPath?: string | null;
-  /** Asks the user to allow an agent's SMS or call (default: a zenity dialog). */
-  approve?: (title: string, body: string) => Promise<boolean>;
+  /**
+   * The MCP socket's listener, already bound, handed over by systemd
+   * (`ekatva-mcp.socket`, fd 3). The path is then neither bound nor
+   * removed here: it outlives this process.
+   */
+  mcpListenFd?: number;
+  /** How long stopping waits for agents' calls in flight (default 20 s). */
+  mcpDrainMs?: number;
+  /**
+   * Asks the user to allow an agent's SMS or call (default: a zenity dialog
+   * on the agent's display, from its hello).
+   */
+  approve?: Approve;
   /** dvarapala's log of finished requests (tests: a file of their own). */
   dvarapalaLog?: string;
   /** Where dvarapala and pramana hand over root requests; default beside socketPath. */
@@ -223,7 +246,11 @@ export class Daemon {
   private local: Server | null = null;
   private localWss: WebSocketServer | null = null;
   private mcp: NetServer | null = null;
-  private mcpSessions = new Set<Socket>();
+  /** Whether this process bound the MCP socket's path (and so may remove it). */
+  private mcpBound = false;
+  private mcpConns = new Set<McpConn>();
+  /** Aborted when stopping: approvals still open are declined. */
+  private mcpStopping = new AbortController();
   private timers: ReturnType<typeof setInterval>[] = [];
   private stores: FileStore[] = [];
   private beacon: BeaconSender | null = null;
@@ -486,6 +513,8 @@ export class Daemon {
   }
 
   async stop(): Promise<void> {
+    // Agents' calls in flight finish first, while the phones are still here.
+    await this.drainMcp();
     for (const t of this.timers) clearInterval(t);
     for (const p of this.peers.values()) p.close("the laptop's service stopped");
     this.peers.clear();
@@ -506,9 +535,6 @@ export class Daemon {
     await new Promise<void>((r) => (this.localWss ? this.localWss.close(() => r()) : r()));
     await new Promise<void>((r) => (this.local ? this.local.close(() => r()) : r()));
     rmSync(this.o.socketPath, { force: true });
-    for (const s of this.mcpSessions) s.destroy();
-    await new Promise<void>((r) => (this.mcp ? this.mcp.close(() => r()) : r()));
-    if (this.mcp) rmSync(this.mcpPath(), { force: true });
     await this.root.close();
     for (const s of this.stores) await s.close();
   }
@@ -1310,77 +1336,172 @@ export class Daemon {
   }
 
   /**
-   * AI agents' sessions, served here instead of a Node process each
-   * (`ekatva-rs mcp` pipes an agent's stdio to it). A connection sends
-   * `{"agent":"name"}` and a newline, then speaks MCP as on stdio. The
-   * tools are `ekatva mcp`'s, calling the local router in this process
-   * with the context the local socket gives that agent, so the log and
-   * the grants are the same. The socket is the user's own (0600 in a
-   * 0700 directory), as the local socket is.
+   * AI agents' sessions, served here instead of a Node process each:
+   * `pranali ekatva` pipes an agent's stdio to this socket (the pranali
+   * protocol, ~/personal/pranali/docs/PROTOCOL.md). A connection says hello
+   * (`{"pranali":1,"agent":…,"env":…}`, answered `{"pranali":1,"ok":true}`),
+   * then speaks MCP as on stdio. The tools are `ekatva mcp`'s, calling the
+   * local router in this process with the context the local socket gives
+   * that agent, so the log and the grants are the same. The socket is the
+   * user's own (0600 in a 0700 directory), as the local socket is.
+   *
+   * Taken from systemd when it was socket-activated (`mcpListenFd`); bound
+   * here otherwise (dev runs, tests), and then only over a dead socket.
    */
   private async listenMcp(): Promise<void> {
     if (this.o.mcpSocketPath === null) return;
+    const server = createNetServer({ allowHalfOpen: true }, (socket) => this.mcpSession(socket));
+    const listen = (how: string | { fd: number }) =>
+      new Promise<void>((resolve, reject) => {
+        server.once("error", reject);
+        server.listen(how as never, () => {
+          server.off("error", reject);
+          resolve();
+        });
+      });
+    if (this.o.mcpListenFd !== undefined) {
+      await listen({ fd: this.o.mcpListenFd });
+      this.mcp = server;
+      return;
+    }
     const path = this.mcpPath();
-    mkdirSync(dirname(path), { recursive: true, mode: 0o700 });
-    chmodSync(dirname(path), 0o700);
-    rmSync(path, { force: true });
-    this.mcp = createNetServer((socket) => this.mcpSession(socket));
+    const wrong = prepareSocketDir(path);
+    if (wrong) {
+      this.log(`no MCP socket: ${wrong}`);
+      return;
+    }
+    if (existsSync(path)) {
+      // Only a dead daemon's leftover (connecting is refused) is removed.
+      if (!(await socketIsDead(path))) {
+        this.log(`no MCP socket: ${path} is in use (or can't be checked); not replacing it`);
+        return;
+      }
+      rmSync(path, { force: true });
+    }
     const old = process.umask(0o177);
     try {
-      await new Promise<void>((resolve, reject) => {
-        this.mcp?.once("error", reject);
-        this.mcp?.listen(path, () => resolve());
-      });
+      await listen(path);
     } finally {
       process.umask(old);
     }
     chmodSync(path, 0o600);
+    this.mcp = server;
+    this.mcpBound = true;
   }
 
+  /** A connection: the hello first (5 s), then its MCP session. */
   private mcpSession(socket: Socket): void {
-    this.mcpSessions.add(socket);
+    const conn: McpConn = { socket, session: null, closed: false };
+    this.mcpConns.add(conn);
     socket.on("error", () => undefined);
-    socket.on("close", () => this.mcpSessions.delete(socket));
+    // Before anything async: a socket that closes during the import doesn't leak a session.
+    socket.on("close", () => {
+      conn.closed = true;
+      this.mcpConns.delete(conn);
+      void conn.session?.server.close().catch(() => undefined);
+    });
+    if (this.mcpStopping.signal.aborted) {
+      socket.destroy();
+      return;
+    }
+    const timer = setTimeout(() => socket.destroy(), HELLO_TIMEOUT_MS);
     let head = Buffer.alloc(0);
-    const preamble = (chunk: Buffer) => {
+    const hello = (chunk: Buffer) => {
       head = Buffer.concat([head, chunk]);
       const nl = head.indexOf(10);
       if (nl < 0) {
-        if (head.length > 4096) socket.destroy();
+        if (head.length > HELLO_MAX) socket.destroy();
         return;
       }
-      socket.off("data", preamble);
+      clearTimeout(timer);
+      socket.off("data", hello);
       socket.pause();
-      let agent = "agent";
-      try {
-        const said = JSON.parse(head.subarray(0, nl).toString("utf8")) as { agent?: unknown };
-        if (typeof said?.agent === "string" && said.agent) agent = said.agent;
-      } catch {
-        socket.destroy();
+      const said = parseHello(head.subarray(0, nl).toString("utf8"));
+      if ("error" in said) {
+        if (said.pranali) socket.end(helloRefused(said.error));
+        else socket.destroy();
         return;
       }
       const rest = head.subarray(nl + 1);
       if (rest.length) socket.unshift(rest);
-      void this.serveMcpOn(socket, agent).catch((e: Error) => {
+      if (said.pranali) socket.write(HELLO_OK);
+      void this.serveMcpOn(conn, said).catch((e: Error) => {
         this.log(`an MCP session failed: ${e.message}`);
         socket.destroy();
       });
     };
-    socket.on("data", preamble);
+    socket.on("data", hello);
   }
 
-  private async serveMcpOn(socket: Socket, agent: string): Promise<void> {
+  private async serveMcpOn(conn: McpConn, hello: Hello): Promise<void> {
     // Loaded with the first session: the daemon doesn't carry the MCP SDK until an agent comes.
     const { serveMcpStream, approve } = await import("./mcp.js");
-    const ctx = this.localContext(agent, socket);
+    if (conn.closed) return;
+    const { socket } = conn;
+    const ctx = this.localContext(hello.agent, socket);
     const api = createTRPCClient<LocalRouter>({
       links: [unstable_localLink({ router: localRouter, createContext: async () => ctx })],
     });
-    if (socket.destroyed) return;
-    const server = await serveMcpStream(socket, socket, api, agent, this.o.approve ?? approve);
-    socket.on("close", () => void server.close().catch(() => undefined));
+    conn.session = await serveMcpStream(socket, api, hello.agent, this.o.approve ?? approve, {
+      env: displayEnv(hello.env),
+      cwd: hello.cwd,
+      signal: this.mcpStopping.signal,
+    });
+    if (conn.closed) {
+      await conn.session.server.close().catch(() => undefined);
+      return;
+    }
+    if (this.mcpStopping.signal.aborted) conn.session.transport.refusing = RESTARTING;
+    // The agent is done sending (pranali's stdin ended): answer what it asked, then end.
+    // Up to 10 s: then it ends anyway.
+    socket.on("end", () => {
+      const cut = setTimeout(() => socket.end(), HALF_OPEN_MS);
+      void conn.session?.transport.idle().then(() => {
+        clearTimeout(cut);
+        socket.end();
+      });
+    });
     socket.resume();
   }
+
+  /**
+   * Stopping (SIGTERM): take no new connections (systemd keeps the socket,
+   * so they wait in its backlog for the next daemon), refuse new calls on
+   * the open ones, decline approvals still waiting, and give the calls in
+   * flight up to `mcpDrainMs` to answer. Then each connection is ended.
+   */
+  private async drainMcp(): Promise<void> {
+    const server = this.mcp;
+    if (!server) return;
+    this.mcp = null;
+    this.mcpStopping.abort();
+    const closed = new Promise<void>((r) => server.close(() => r()));
+    const conns = [...this.mcpConns];
+    for (const c of conns) if (c.session) c.session.transport.refusing = RESTARTING;
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    await Promise.race([
+      Promise.all(conns.map((c) => c.session?.transport.idle())),
+      new Promise<void>((r) => (timer = setTimeout(r, this.o.mcpDrainMs ?? 20_000))),
+    ]);
+    clearTimeout(timer);
+    for (const c of conns) c.socket.end();
+    // A client that doesn't close its side gets a second to, then is cut.
+    await Promise.race([closed, new Promise((r) => setTimeout(r, 1_000).unref())]);
+    for (const c of this.mcpConns) c.socket.destroy();
+    await closed;
+    if (this.mcpBound) rmSync(this.mcpPath(), { force: true });
+  }
+}
+
+const RESTARTING = "ekatva is restarting; this call was not run, retry it";
+/** After an agent's half-close, how long its owed answers may take. */
+const HALF_OPEN_MS = 10_000;
+
+/** A connection to the MCP socket, and its session once it said hello. */
+interface McpConn {
+  socket: Socket;
+  session: StreamSession | null;
+  closed: boolean;
 }
 
 export { LinkError, VERSION };

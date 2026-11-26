@@ -12,6 +12,9 @@ Restart=on-failure
 RestartSec=3
 RestartSteps=5
 RestartMaxDelaySec=60
+# On stop, agents' calls in flight get up to 20 s to finish (an SMS still
+# waiting for your answer is declined at once).
+TimeoutStopSec=30
 # The keys and the log are yours alone.
 UMask=0077
 NoNewPrivileges=yes

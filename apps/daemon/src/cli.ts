@@ -20,6 +20,7 @@ import WebSocket from "ws";
 import { loadConfig } from "./config.js";
 import { Daemon, VERSION } from "./daemon.js";
 import { loadIdentity } from "./identity.js";
+import { activatedFd, forgetActivation } from "./mcpSocket.js";
 import { dirs, mcpSocketPath, socketPath } from "./paths.js";
 import { callFor } from "./services/calls.js";
 import { run } from "./services/system.js";
@@ -61,7 +62,7 @@ const HELP = `ekatva ${VERSION}: your phone and your laptop as one device
   ekatva tunnel quick|none        a free quick tunnel, or none (now)
   ekatva window [PLACE]           open the window: overview, messages, calls, files, log, devices, pair, apps
   ekatva daemon                   run the service (systemd does this)
-  ekatva mcp                      an MCP server on stdio, for AI agents (EKATVA_AGENT=name)
+  ekatva mcp                      an MCP server on stdio, for AI agents (EKATVA_AGENT=name; through pranali when installed)
 
 Presets: ${Object.keys(PRESETS).join(", ")}
 Capabilities: ${Object.keys(CAPABILITIES)
@@ -343,6 +344,8 @@ async function main(argv: string[]): Promise<void> {
       });
       n.on("error", () => undefined);
     };
+    const mcpFd = activatedFd(process.env, process.pid);
+    forgetActivation(process.env);
     const d = new Daemon({
       config,
       key,
@@ -351,12 +354,20 @@ async function main(argv: string[]): Promise<void> {
       undoDir: dirs.undo(),
       socketPath: socketPath(),
       mcpSocketPath: mcpSocketPath(),
+      // Socket-activated (ekatva-mcp.socket): systemd's listener, at fd 3.
+      ...(mcpFd !== null ? { mcpListenFd: mcpFd } : {}),
       notify,
       keepTunnel: config.tunnel.mode === "always",
     });
     await d.start();
     console.error(`identity in the ${where}`);
-    const stop = () => void d.stop().then(() => process.exit(0));
+    // Agents' calls in flight get up to 20 s (the unit's TimeoutStopSec is 30).
+    let stopping = false;
+    const stop = () => {
+      if (stopping) return;
+      stopping = true;
+      void d.stop().then(() => process.exit(0));
+    };
     process.on("SIGTERM", stop);
     process.on("SIGINT", stop);
     return;
