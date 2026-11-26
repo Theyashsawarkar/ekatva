@@ -3,11 +3,11 @@
 Thanks for helping. Before a pull request:
 
 1. `pnpm install`, then `pnpm typecheck`, `pnpm lint` and `pnpm test` pass.
-   ekatva is TypeScript everywhere except small Rust binaries in
-   `apps/daemon-rs` for long-running or per-session processes (and Expo
-   native modules); there, `cargo test` and
-   `cargo clippy --all-targets -- -D warnings` pass too. Build it
-   (`cargo build --release`) before `pnpm test` to run its integration test.
+   ekatva is TypeScript everywhere except a small Rust binary in
+   `apps/daemon-rs` for a long-running process (and Expo native modules);
+   there, `cargo test` and `cargo clippy --all-targets -- -D warnings` pass
+   too. `pnpm build` builds it (when cargo is installed); build before
+   `pnpm test` to run its integration test.
 2. A new feature is a capability (see the README's "Adding a feature"):
    its contract in `packages/protocol`, off until granted.
 3. Anything touching the link, pairing or root: read SECURITY.md first and

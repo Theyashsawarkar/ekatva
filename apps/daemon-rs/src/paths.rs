@@ -27,11 +27,6 @@ pub fn socket() -> PathBuf {
     runtime().join("ekatva.sock")
 }
 
-/// The daemon's MCP socket: one agent session per connection.
-pub fn mcp_socket() -> PathBuf {
-    runtime().join("ekatva").join("mcp.sock")
-}
-
 /// The TypeScript CLI: `$EKATVA_TS_CLI` (the launcher sets it), else
 /// apps/daemon/bin/ekatva.js in the checkout this binary was built in.
 pub fn ts_cli() -> PathBuf {

@@ -12,9 +12,12 @@ app from this same code, signed with their own key, in one command.
 ## The laptop
 
 You need Linux with systemd, Node 22 or newer, pnpm, and tmux for agents.
-Rust (cargo) is optional: it builds `ekatva-rs`, which runs each agent's MCP
-session and the waybar capsule without a Node process each; without it the
-`ekatva` launcher runs the TypeScript CLI for those too.
+Rust (cargo) is optional: `pnpm build` builds `ekatva-rs` with it, which runs
+the waybar capsule without a Node process; without it (or when the binary is
+older than the TypeScript build) the `ekatva` launcher runs the TypeScript CLI.
+[pranali](https://github.com/Theyashsawarkar/pranali) is optional too: on your
+PATH, it carries each agent's MCP session into the daemon instead of a Node
+process per session.
 `wl-clipboard` gives clipboard sync, `libsecret` (`secret-tool`) keeps the
 identity key in your desktop keyring.
 
@@ -22,13 +25,20 @@ identity key in your desktop keyring.
 git clone https://github.com/Theyashsawarkar/ekatva
 cd ekatva
 pnpm install
-pnpm build
-cargo build --release --manifest-path apps/daemon-rs/Cargo.toml   # optional: needs Rust
+pnpm build                    # also builds ekatva-rs when cargo is installed
 ln -sf "$PWD/apps/daemon/bin/ekatva" ~/.local/bin/ekatva
-cp apps/daemon/systemd/ekatva.service ~/.config/systemd/user/
-systemctl --user enable --now ekatva
+cp apps/daemon/systemd/ekatva.service apps/daemon/systemd/ekatva-mcp.socket ~/.config/systemd/user/
+systemctl --user daemon-reload
+systemctl --user enable --now ekatva-mcp.socket ekatva
 ekatva status
 ```
+
+`ekatva-mcp.socket` is agents' MCP socket, held by systemd so it outlives
+the service: during a restart (an update) agents' connections wait for the
+new daemon instead of failing, and a connection starts the service when it
+isn't running. Start the socket before the service (as above), or restart
+the service once after enabling it, so the daemon takes the socket from
+systemd instead of binding its own.
 
 The laptop's window is a [Vyom](https://github.com/Theyashsawarkar/vyom) popup,
 [Darpaṇa](https://github.com/Theyashsawarkar/darpana) (दर्पण, the mirror):

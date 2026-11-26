@@ -1,5 +1,5 @@
-# ekatva's small native processes: what runs long, or once per agent
-# session, without a Node runtime each (apps/daemon stays TypeScript).
+# ekatva's small native process: what runs long without a Node runtime
+# (apps/daemon stays TypeScript).
 [workspace]
 members = ["."]
 resolver = "3"
@@ -9,7 +9,7 @@ name = "ekatva-rs"
 version = "0.1.1"
 edition = "2024"
 license = "MIT"
-description = "ekatva's per-session and long-running clients: the MCP pipe and the waybar watcher"
+description = "ekatva's long-running client without a Node runtime: the waybar watcher"
 publish = false
 
 [[bin]]

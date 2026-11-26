@@ -1,7 +1,9 @@
 //! `ekatva-rs call --waybar`: the call in progress as a waybar capsule,
 //! line for line what `ekatva call --waybar` (apps/daemon/src/cli.ts) prints:
 //! an empty capsule at once, one line per change of `admin.calls.watch`,
-//! and the line again every 5 s while a call lasts (for its time). Like the
+//! and the line again every 5 s while a call lasts (for its time), on the
+//! same 5 s marks from the start. With no call it sleeps in a blocking read:
+//! no timer wakes it (the daemon sends no keepalive PINGs). Like the
 //! tRPC client there, it keeps the last call through a lost connection,
 //! tries again every 2 s and subscribes again; an error from the
 //! subscription clears the call and ends it.
@@ -177,27 +179,41 @@ fn read_frame(text: &str) -> Got {
     }
 }
 
+/// The first 5 s mark from `start` after `now`.
+fn next_mark(start: Instant, now: Instant) -> Instant {
+    let n = now.saturating_duration_since(start).as_millis() / REDRAW.as_millis() + 1;
+    start + REDRAW * n as u32
+}
+
 pub fn run() -> ! {
     let start = Instant::now();
-    let mut ticks = 1u32;
     let mut call: Option<Call> = None;
+    // The next redraw: only while there's a call.
+    let mut tick: Option<Instant> = None;
     // The subscription is wanted until the daemon ends it.
     let mut subscribed = true;
     let mut ws: Option<WebSocket<UnixStream>> = None;
     let mut retry_at = Some(Instant::now());
     draw(None);
     loop {
-        let tick = start + REDRAW * ticks;
         let now = Instant::now();
-        if now >= tick {
-            if call.is_some() {
+        tick = match (&call, tick) {
+            (None, _) => None,
+            (Some(_), None) => Some(next_mark(start, now)),
+            (Some(_), Some(t)) if now >= t => {
                 draw(call.as_ref());
+                Some(next_mark(start, now))
             }
-            ticks += 1;
-            continue;
-        }
+            (Some(_), t) => t,
+        };
         let Some(sock) = ws.as_mut() else {
-            let at = retry_at.unwrap_or(tick).min(tick);
+            // Not connected: retry_at is set; wake for it or the next redraw.
+            let at = match (retry_at, tick) {
+                (Some(r), Some(t)) => r.min(t),
+                (Some(r), None) => r,
+                (None, Some(t)) => t,
+                (None, None) => now + RETRY,
+            };
             std::thread::sleep(at.saturating_duration_since(now));
             if retry_at.is_some_and(|r| Instant::now() >= r) {
                 ws = connect();
@@ -207,6 +223,10 @@ pub fn run() -> ! {
                 {
                     ws = None;
                 }
+                if let Some(s) = ws.as_mut() {
+                    // Idle: block until the daemon says something (or goes).
+                    let _ = s.get_ref().set_read_timeout(None);
+                }
                 retry_at = if ws.is_some() {
                     None
                 } else {
@@ -215,10 +235,9 @@ pub fn run() -> ! {
             }
             continue;
         };
-        let _ = sock.get_ref().set_read_timeout(Some(
-            tick.saturating_duration_since(now)
-                .max(Duration::from_millis(1)),
-        ));
+        let _ = sock.get_ref().set_read_timeout(
+            tick.map(|t| t.saturating_duration_since(now).max(Duration::from_millis(1))),
+        );
         let lost = match sock.read() {
             Ok(Message::Text(t)) => match read_frame(t.as_str()) {
                 Got::Nothing => false,
@@ -289,6 +308,15 @@ mod tests {
             render(Some(&video), 65_000.0),
             "{\"text\":\"WhatsApp video · Unknown · 1m\",\"class\":[\"active\",\"video\"],\"tooltip\":\"On a call with WhatsApp video · Unknown on Pixel · 1m\\nClick: open ekatva · right click: hang up\"}"
         );
+    }
+
+    #[test]
+    fn marks_from_the_start() {
+        let s = Instant::now();
+        assert_eq!(next_mark(s, s), s + REDRAW);
+        assert_eq!(next_mark(s, s + Duration::from_millis(4_999)), s + REDRAW);
+        assert_eq!(next_mark(s, s + REDRAW), s + REDRAW * 2);
+        assert_eq!(next_mark(s, s + Duration::from_secs(12)), s + REDRAW * 3);
     }
 
     #[test]

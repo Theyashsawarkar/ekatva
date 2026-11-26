@@ -9,15 +9,27 @@ its state, ring or lock it, read and send SMS, place calls, use its
 clipboard and files, keep the laptop awake.
 
 The daemon serves the tools itself, on its MCP socket
-(`$XDG_RUNTIME_DIR/ekatva/mcp.sock`, yours alone, mode 0600); `ekatva mcp`
-is a small Rust pipe from the agent's stdio to it (`ekatva-rs`, built in
-`apps/daemon-rs`), so six sessions don't cost six Node processes. The tools
-call the same router as the `ekatva` command, so an agent can do nothing
-you couldn't from a terminal. When the service restarts (an update), the
-pipe reconnects: a call the old daemon didn't answer fails with "ekatva
-daemon restarted; try again", and the session goes on. Without the Rust
-binary, or with an older daemon, `ekatva mcp` is the Node server over the
-local socket, as before.
+(`$XDG_RUNTIME_DIR/ekatva/mcp.sock`, yours alone: 0600 in a 0700
+directory, never in `/tmp`). With [pranali](https://github.com/Theyashsawarkar/pranali)
+installed, `ekatva mcp` is `pranali ekatva`: one small pipe from the
+agent's stdio to that socket, the same one the other Vayu tools use, so
+six sessions don't cost six Node processes. It says hello first (the
+agent's name, and its `DISPLAY` and `WAYLAND_DISPLAY`, so an approval
+opens on the screen the agent runs on), then speaks MCP. The tools call
+the same router as the `ekatva` command, so an agent can do nothing you
+couldn't from a terminal.
+
+**Restarts and updates.** With `ekatva-mcp.socket` installed ([Install](/start/install/)),
+systemd holds the socket: while the service restarts, agents' connections
+wait instead of failing, and pranali reconnects the session by itself. On
+a stop, calls in flight get up to 20 seconds to finish; an SMS or call
+still waiting for your answer is called off ("Not done: ekatva was
+stopping... nothing was sent"), and a call that arrives during the stop
+isn't run and says so. A call the old daemon took with it comes back as
+"may or may not have happened": check the log before trying again.
+
+Without pranali, `ekatva mcp` is the Node server over the local socket,
+as before.
 
 ## Add it to an agent
 

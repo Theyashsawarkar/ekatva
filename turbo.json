@@ -4,6 +4,8 @@
     "build": { "dependsOn": ["^build"], "outputs": ["dist/**", "out/**"] },
     "typecheck": { "dependsOn": ["^build"] },
     "test": { "dependsOn": ["^build"] },
-    "dev": { "cache": false, "persistent": true }
+    "dev": { "cache": false, "persistent": true },
+    "@ekatva/daemon-rs#build": { "dependsOn": ["@ekatva/daemon#build"], "cache": false },
+    "@ekatva/daemon-rs#test": { "cache": false }
   }
 }

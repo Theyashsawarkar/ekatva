@@ -1,18 +1,27 @@
 #!/bin/sh
-# The installed `ekatva` (~/.local/bin/ekatva links here). What runs long or
-# once per agent session (`mcp`, `call --waybar`) goes to the small Rust
-# binary when it's built (apps/daemon-rs); everything else, and everything
-# when it isn't, to the TypeScript CLI.
+# The installed `ekatva` (~/.local/bin/ekatva links here).
+# - `mcp`: an agent's session goes through pranali (one small pipe into the
+#   daemon's MCP socket, shared by the Vayu tools) when it's on PATH; it runs
+#   the TypeScript server itself when the daemon can't be reached.
+# - `call --waybar`: the small Rust watcher (apps/daemon-rs), when it's built
+#   and not older than the TypeScript it pairs with (a stale build is skipped).
+# - Everything else, and those when they can't: the TypeScript CLI.
 here=$(dirname "$(readlink -f "$0")")
-rs="$here/../../daemon-rs/target/release/ekatva-rs"
-if [ -x "$rs" ]; then
-  case "$1" in
-    mcp) EKATVA_TS_CLI="$here/ekatva.js" exec "$rs" "$@" ;;
-    call)
+ts="$here/ekatva.js"
+case "$1" in
+  mcp)
+    if command -v pranali >/dev/null 2>&1; then
+      shift
+      exec pranali ekatva --agent "${EKATVA_AGENT:-agent}" --fallback "$ts" mcp --in-process "$@"
+    fi
+    ;;
+  call)
+    rs="$here/../../daemon-rs/target/release/ekatva-rs"
+    if [ -x "$rs" ] && ! [ "$here/../dist/cli.js" -nt "$rs" ]; then
       for a in "$@"; do
-        [ "$a" = --waybar ] && EKATVA_TS_CLI="$here/ekatva.js" exec "$rs" "$@"
+        [ "$a" = --waybar ] && EKATVA_TS_CLI="$ts" exec "$rs" "$@"
       done
-      ;;
-  esac
-fi
-exec "$here/ekatva.js" "$@"
+    fi
+    ;;
+esac
+exec "$ts" "$@"

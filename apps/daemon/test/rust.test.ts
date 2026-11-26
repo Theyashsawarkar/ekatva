@@ -1,14 +1,13 @@
 /**
- * The Rust clients (apps/daemon-rs) against a real daemon on temporary
- * paths: the MCP pipe (two agents at once, the fallback to `ekatva mcp`,
- * a daemon restart mid-session) and the waybar watcher, line for line
- * against the TypeScript one. Skipped when the binary isn't built
- * (`cargo build --release` in apps/daemon-rs).
+ * The Rust waybar watcher (apps/daemon-rs) against a real daemon on
+ * temporary paths, line for line against the TypeScript one. Skipped when
+ * the binary isn't built (`pnpm build`, or `cargo build --release` in
+ * apps/daemon-rs). Agents' MCP sessions: pranali.test.ts.
  */
 import { type ChildProcess, spawn } from "node:child_process";
 import { existsSync } from "node:fs";
 import * as fs from "node:fs/promises";
-import { tmpdir, userInfo } from "node:os";
+import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { createInterface } from "node:readline";
 import { fileURLToPath } from "node:url";
@@ -36,8 +35,6 @@ let root: string;
 let home: string;
 let daemon: Daemon;
 const children: ChildProcess[] = [];
-/** The approval dialog: held until the test lets it go. */
-let approval: Promise<boolean> = Promise.resolve(false);
 
 async function startDaemon(): Promise<Daemon> {
   const config = loadConfig(join(root, "none.toml"));
@@ -58,7 +55,7 @@ async function startDaemon(): Promise<Daemon> {
     keepaliveMs: 0,
     jyotiHost: fakeHost,
     mediaHost: { run: async () => ({ code: 127, out: "" }), art: async () => null, now: Date.now },
-    approve: () => approval,
+    approve: async () => false,
     log: () => undefined,
   });
   await d.start();
@@ -79,56 +76,6 @@ const env = (runtime = root, more: Record<string, string> = {}) => ({
   EKATVA_TS_CLI: TS,
   ...more,
 });
-
-type Rpc = {
-  id?: unknown;
-  result?: Record<string, unknown>;
-  error?: { code: number; message: string };
-};
-
-/** An agent's MCP session through `ekatva-rs mcp`. */
-function session(agent: string, runtime = root) {
-  const p = spawn(RS, ["mcp"], {
-    env: env(runtime, { EKATVA_AGENT: agent }),
-    stdio: ["pipe", "pipe", "inherit"],
-  });
-  children.push(p);
-  const waiting = new Map<unknown, (m: Rpc) => void>();
-  createInterface({ input: p.stdout! }).on("line", (l) => {
-    const m = JSON.parse(l) as Rpc;
-    waiting.get(m.id)?.(m);
-  });
-  let next = 1;
-  const send = (m: object) => p.stdin!.write(`${JSON.stringify({ jsonrpc: "2.0", ...m })}\n`);
-  const call = (method: string, params?: object): Promise<Rpc> => {
-    const id = next++;
-    return new Promise((res) => {
-      waiting.set(id, res);
-      send({ id, method, params });
-    });
-  };
-  const tool = async (name: string, args: object = {}) => {
-    const r = await call("tools/call", { name, arguments: args });
-    return r.result as { content: { text: string }[]; isError?: boolean };
-  };
-  const init = async () => {
-    const r = await call("initialize", {
-      protocolVersion: "2025-06-18",
-      capabilities: {},
-      clientInfo: { name: "test", version: "0" },
-    });
-    send({ method: "notifications/initialized" });
-    return r;
-  };
-  const exited = new Promise<number | null>((r) => p.on("exit", (code) => r(code)));
-  return { p, call, tool, init, send, exited };
-}
-
-const toolNames = (r: Rpc) =>
-  ((r.result?.tools ?? []) as { name: string; description: string }[]).map((t) => [
-    t.name,
-    t.description,
-  ]);
 
 /** A watcher's lines, as they come. */
 function watch(cmd: string, args: string[]) {
@@ -163,90 +110,6 @@ afterAll(async () => {
   for (const c of children) c.kill("SIGKILL");
   await daemon.stop();
   await fs.rm(root, { recursive: true, force: true });
-});
-
-describe.skipIf(!built)("ekatva-rs mcp", () => {
-  it("serves two agents at once, with the old server's tools, logged as each", async () => {
-    const mcpSock = join(root, "ekatva", "mcp.sock");
-    expect((await fs.stat(mcpSock)).mode & 0o777).toBe(0o600);
-    expect((await fs.stat(join(root, "ekatva"))).mode & 0o777).toBe(0o700);
-
-    // The old server: `ekatva mcp` in Node, over the CLI's socket (a runtime dir with no MCP socket).
-    const bare = join(root, "bare");
-    await fs.mkdir(bare, { recursive: true });
-    await fs.symlink(join(root, "ekatva.sock"), join(bare, "ekatva.sock"));
-    const old = session("gamma", bare);
-    const oldInit = await old.init();
-    const oldTools = toolNames(await old.call("tools/list"));
-    expect(oldTools.length).toBeGreaterThan(10);
-
-    const a = session("alpha");
-    const b = session("beta");
-    const [ia, ib] = await Promise.all([a.init(), b.init()]);
-    expect(ia.result?.serverInfo).toMatchObject({ name: "ekatva" });
-    expect(ia.result?.instructions).toBe(oldInit.result?.instructions);
-    expect(ib.result?.instructions).toBe(oldInit.result?.instructions);
-    expect(toolNames(await a.call("tools/list"))).toEqual(oldTools);
-    expect(toolNames(await b.call("tools/list"))).toEqual(oldTools);
-
-    // A harmless call each, at the same time: jyoti off (a fake host).
-    const [ra, rb] = await Promise.all([
-      a.tool("jyoti_set", { level: "off" }),
-      b.tool("jyoti_set", { level: "off" }),
-    ]);
-    expect(ra.isError).toBeFalsy();
-    expect(rb.isError).toBeFalsy();
-    await old.tool("jyoti_set", { level: "off" });
-    const log = JSON.parse((await a.tool("log_recent", { limit: 10 })).content[0].text) as {
-      who: string;
-    }[];
-    const me = userInfo().username;
-    const who = log.map((e) => e.who);
-    expect(who).toContain(`${me} via alpha`);
-    expect(who).toContain(`${me} via beta`);
-    // The fallback (Node) logs the same way.
-    expect(who).toContain(`${me} via gamma`);
-
-    old.p.stdin!.end();
-    a.p.stdin!.end();
-    b.p.stdin!.end();
-    expect(await a.exited).toBe(0);
-    expect(await b.exited).toBe(0);
-  });
-
-  it("falls back to the TypeScript server when there's no MCP socket", async () => {
-    const bare = join(root, "bare2");
-    await fs.mkdir(bare, { recursive: true });
-    await fs.symlink(join(root, "ekatva.sock"), join(bare, "ekatva.sock"));
-    const s = session("delta", bare);
-    await s.init();
-    // exec'd: the same process is Node now.
-    expect(await fs.readlink(`/proc/${s.p.pid}/exe`)).toBe(await fs.realpath(process.execPath));
-    expect(toolNames(await s.call("tools/list")).length).toBeGreaterThan(10);
-    s.p.kill();
-  });
-
-  it("outlives a daemon restart: the unanswered call fails, the session goes on", async () => {
-    const s = session("epsilon");
-    await s.init();
-    // An SMS waits for the user's approval, which never comes before the restart.
-    approval = new Promise(() => undefined);
-    const held = s.call("tools/call", {
-      name: "sms_send",
-      arguments: { to: "+15550100", text: "made-up test message" },
-    });
-    await sleep(200);
-    await restart();
-    approval = Promise.resolve(false);
-    const failed = await held;
-    expect(failed.error).toEqual({ code: -32000, message: "ekatva daemon restarted; try again" });
-    // The new daemon has the session (replayed initialize): tools work again.
-    const r = await s.tool("jyoti_set", { level: "off" });
-    expect(r.isError).toBeFalsy();
-    expect(toolNames(await s.call("tools/list")).length).toBeGreaterThan(10);
-    s.p.stdin!.end();
-    expect(await s.exited).toBe(0);
-  });
 });
 
 describe.skipIf(!built)("ekatva-rs call --waybar", () => {

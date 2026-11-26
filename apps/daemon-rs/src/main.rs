@@ -1,9 +1,8 @@
-//! `ekatva-rs`: the parts of the `ekatva` CLI that run long or once per
-//! agent session, without a Node runtime each. `mcp` pipes an agent's stdio
-//! to the daemon's MCP socket; `call --waybar` is the bar's call capsule.
-//! Anything else runs the TypeScript CLI (apps/daemon), unchanged.
+//! `ekatva-rs`: the part of the `ekatva` CLI that runs as long as waybar
+//! does, without a Node runtime: `call --waybar`, the bar's call capsule.
+//! Anything else runs the TypeScript CLI (apps/daemon), unchanged. (Agents'
+//! MCP sessions go through `pranali ekatva` now.)
 
-mod mcp;
 mod paths;
 mod waybar;
 
@@ -14,7 +13,6 @@ use std::process::Command;
 fn main() {
     let args: Vec<OsString> = std::env::args_os().skip(1).collect();
     match args.first().and_then(|a| a.to_str()) {
-        Some("mcp") => mcp::run(&args),
         Some("call") if args[1..].iter().any(|a| a == "--waybar") => waybar::run(),
         _ => exec_ts(&args),
     }
