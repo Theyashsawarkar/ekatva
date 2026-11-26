@@ -20,6 +20,8 @@
   <!-- Find my phone: ring through Do Not Disturb (you allow it once), and vibrate. -->
   <uses-permission android:name="android.permission.ACCESS_NOTIFICATION_POLICY" />
   <uses-permission android:name="android.permission.VIBRATE" />
+  <!-- After a restart: "Tap to reconnect to your laptop" (only when one is paired). -->
+  <uses-permission android:name="android.permission.RECEIVE_BOOT_COMPLETED" />
   <!-- Light and dark from the laptop: a system setting, granted once over USB
        (adb shell pm grant io.github.theyashsawarkar.ekatva android.permission.WRITE_SECURE_SETTINGS). -->
   <uses-permission android:name="android.permission.WRITE_SECURE_SETTINGS" xmlns:tools="http://schemas.android.com/tools" tools:ignore="ProtectedPermissions" />
@@ -48,6 +50,20 @@
       </intent-filter>
     </service>
 
+    <!-- Other Vayu apps on this phone (nāda, vāgdevī…) reach their laptop halves through
+         ekatva. Exported with no permission on purpose: who an app is comes from Android
+         (its uid, package and signing certificate), and nothing passes until you've
+         allowed that exact app in ekatva (AppBridge.kt). -->
+    <service
+      android:name=".AppBridgeService"
+      android:exported="true"
+      tools:ignore="ExportedService"
+      xmlns:tools="http://schemas.android.com/tools">
+      <intent-filter>
+        <action android:name="io.github.theyashsawarkar.ekatva.APPS" />
+      </intent-filter>
+    </service>
+
     <!-- Staying linked with the laptop while the app is in the background. -->
     <service
       android:name=".LinkService"
@@ -57,6 +73,14 @@
     <receiver android:name=".RingStopReceiver" android:exported="false">
       <intent-filter>
         <action android:name="io.github.theyashsawarkar.ekatva.STOP_RINGING" />
+      </intent-filter>
+    </receiver>
+
+    <!-- After a restart, when a laptop is paired: "Tap to reconnect" (BootReceiver.kt). -->
+    <receiver android:name=".BootReceiver" android:exported="true">
+      <intent-filter>
+        <action android:name="android.intent.action.BOOT_COMPLETED" />
+        <action android:name="android.intent.action.MY_PACKAGE_REPLACED" />
       </intent-filter>
     </receiver>
 

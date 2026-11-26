@@ -3,10 +3,13 @@
 
     python3 examples/echo/echo.py
 
-Then grant a phone "apps" and "app:echo" (ekatva grant <phone> apps app:echo)
-and call it from the phone's echo app, or from the CLI:
+The first time it asks to link: accept it in Darpaṇa (Apps), or
+`ekatva apps accept echo`. Your phones may then reach it; call it from the
+phone's echo app, or from the CLI:
 
-    ekatva apps            # it's there, online
+    ekatva apps                                   # it's there, online
+    ekatva apps call laptop:echo say '"hi"'
+    ekatva apps call laptop:echo files --file notes.txt
 """
 import os
 import signal
@@ -23,17 +26,28 @@ MANIFEST = {
     "methods": [
         {"name": "say", "why": "Says back what you send"},
         {"name": "time", "why": "The laptop's clock", "log": False},
+        {"name": "files", "why": "Says which files came with the call, and their sizes"},
     ],
     "events": [{"name": "note", "why": "A note, printed on the laptop"}],
 }
 
 app = App(MANIFEST, on_ready=lambda: print("echo: registered", flush=True),
+          on_status=lambda status, why: print(f"echo: {status}" + (f" ({why})" if why else ""), flush=True),
           on_error=lambda e: print(f"echo: {e}", file=sys.stderr, flush=True))
 
 
 @app.on("say")
 def say(inp, sender):
     return {"said": inp, "to": sender.get("name"), "by": "python"}
+
+
+@app.on("files")
+def files(_inp, sender, got):
+    out = []
+    for f in got:
+        with open(f["path"], "rb") as fh:
+            out.append({"name": f["name"], "size": len(fh.read())})
+    return {"files": out, "from": sender.get("app") or sender.get("name")}
 
 
 @app.on("time")

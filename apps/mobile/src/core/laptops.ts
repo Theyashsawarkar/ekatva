@@ -7,6 +7,11 @@ export interface LaptopRecord {
   name: string;
   lan: string[];
   url: string | null;
+  /**
+   * An address you set on this phone ("ekatva-tunnel.example.dev"): used in
+   * place of the one the laptop says, until you clear it.
+   */
+  custom?: string | null;
   /** The laptop's tunnel when last told (link.watch): for "reachable from anywhere". */
   away?: {
     state: "off" | "starting" | "up" | "missing";
@@ -21,6 +26,10 @@ export interface LaptopRecord {
 }
 
 const KEY = "ekatva.laptops";
+
+/** Where to reach a laptop from anywhere: the address you set here, else its own. */
+export const tunnelOf = (l: LaptopRecord): string | null =>
+  l.custom ? `wss://${l.custom}` : l.url;
 
 /** What a newly paired laptop may do on the phone: everything on this side. */
 export const PHONE_DEFAULT: Capability[] = (Object.keys(CAPABILITIES) as Capability[]).filter(

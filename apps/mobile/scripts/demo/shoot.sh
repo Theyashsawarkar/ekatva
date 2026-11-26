@@ -114,7 +114,11 @@ A shell 'echo "_ --disable-fre --no-default-browser-check --no-first-run" > /dat
 A shell am set-debug-app --persistent com.android.chrome
 
 open_app() { A shell monkey -p $pkg -c android.intent.category.LAUNCHER 1 >/dev/null 2>&1; }
-pin() { sleep 3; A shell input text 1111; A shell input keyevent KEYCODE_ENTER; }
+# The screen lock's prompt (no fingerprint on the emulator): wait for its window, then the PIN.
+pin() {
+  for _ in $(seq 30); do A shell dumpsys window | grep -q 'u0 BiometricPrompt' && break; sleep 1; done
+  sleep 1.5; A shell input text 1111; A shell input keyevent KEYCODE_ENTER; sleep 2
+}
 open_app
 shot welcome 8
 tap 540 1488 && pin # set up: keys behind the screen lock

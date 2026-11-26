@@ -17,6 +17,21 @@ From the phone you can **answer** an option, **reply** with text (typed or
 dictated), **interrupt** it (Esc), read its recent **output**, and **start a
 new session** in any of your projects with a first prompt.
 
+## The whole conversation
+
+A Claude Code session shows its real history, from Claude's own transcript:
+everything since it started, live, with older messages as you scroll up. Runs
+of tools fold into one line; open one to see what it ran and all of its
+output. Other agents are read from their screen.
+
+- **Names** are Claude's own. Tap the name to rename the session (Claude's
+  `/rename`: it changes on the laptop too).
+- **While it works**, a message waits its turn in Claude's queue, shown above
+  the message box. **Send now** has Claude take it at once (its ctrl+x ctrl+s);
+  holding Send does both.
+- A message isn't typed over a question, or over words left unsent in Claude's
+  box on the laptop: the phone says so instead.
+
 ## Answers land where you meant
 
 Each question has a hash. An answer carries the hash of the question you saw;

@@ -63,10 +63,24 @@ const notYet = (what: string): never => {
   });
 };
 
+const noApps: PhoneServices["apps"] = {
+  list: async () => [],
+  call: async () => notYet("Reaching the phone's apps"),
+  emit: async () => notYet("Reaching the phone's apps"),
+  upload: {
+    begin: async () => notYet("Reaching the phone's apps"),
+    put: async () => notYet("Reaching the phone's apps"),
+    finish: async () => notYet("Reaching the phone's apps"),
+    cancel: async () => undefined,
+  },
+};
+
 export function phoneServices(
   device: DeviceApi,
   files: PhoneFiles,
   share: ShareService,
+  /** The phone's Vayu apps (core/apps.ts); none: the laptop is told there are none. */
+  apps: PhoneServices["apps"] = noApps,
 ): PhoneServices {
   const setAppearance = async (mode: AppearanceMode): Promise<Done<Appearance>> => {
     if (!device.appearance) return notYet("Switching light and dark");
@@ -104,6 +118,7 @@ export function phoneServices(
   };
 
   return {
+    apps,
     async status(): Promise<PhoneStatus> {
       const [battery, signal, locked] = await Promise.all([
         device.battery(),

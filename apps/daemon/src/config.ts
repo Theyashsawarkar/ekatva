@@ -7,7 +7,8 @@
  *   [files]   roots = ["~"]          private = ["~/.ssh", …]
  *   [undo]    days = 30              max_gb = 5
  *   [agents]  roots = ["~/personal", "~/codes"]
- *   [tunnel]  kind = "cloudflared"   # or "ngrok", "tailscale", "none"
+ *   [tunnel]  kind = "cloudflared"   # or "named", "ngrok", "tailscale", "none"
+ *             hostname = "ekatva-tunnel.example.dev"   name = "ekatva"   # kind = "named"
  *             mode = "always"        # or "on-demand"
  *             server = "https://ntfy.sh"   idle_minutes = 10
  */
@@ -63,7 +64,22 @@ const Config = z.object({
     .default({ roots: [] }),
   tunnel: z
     .object({
-      kind: z.enum(["cloudflared", "ngrok", "tailscale", "none"]).default("cloudflared"),
+      kind: z.enum(["named", "cloudflared", "ngrok", "tailscale", "none"]).default("cloudflared"),
+      /**
+       * kind = "named": your Cloudflare tunnel's address (a DNS record on your
+       * domain points at the tunnel), and the tunnel's name in your account.
+       */
+      hostname: z
+        .string()
+        .regex(
+          /^(?=.{1,253}$)([a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?\.)+[a-z]{2,}$/i,
+          "a hostname, like ekatva-tunnel.example.dev",
+        )
+        .optional(),
+      name: z
+        .string()
+        .regex(/^[\w.-]{1,64}$/)
+        .default("ekatva"),
       /**
        * always: up all the time while a phone is paired, so the phone comes
        * back from any network at once. on-demand: opened when a phone away
@@ -74,8 +90,13 @@ const Config = z.object({
       server: z.string().url().default("https://ntfy.sh"),
       idle_minutes: z.number().min(1).default(10),
     })
+    .refine((t) => t.kind !== "named" || !!t.hostname, {
+      message: 'kind = "named" needs hostname (your tunnel\'s address)',
+      path: ["hostname"],
+    })
     .default({
       kind: "cloudflared",
+      name: "ekatva",
       mode: "always",
       server: "https://ntfy.sh",
       idle_minutes: 10,

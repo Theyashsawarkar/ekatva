@@ -1,11 +1,13 @@
 import { CAPABILITIES, type Capability } from "@ekatva/protocol";
 import Constants from "expo-constants";
 import { router } from "expo-router";
-import { Alert, View } from "react-native";
-import { Glyph, H2, Item, List, Page, Pill, Toggle, Txt } from "../../ui/lac";
+import { useState } from "react";
+import { Alert, StyleSheet, TextInput, View } from "react-native";
+import { hostOf } from "../../core/tunnel-address";
+import { Btn, Glyph, H2, Item, List, Page, Pill, Sheet, Toggle, Txt, toast } from "../../ui/lac";
 import { PhoneFeatures } from "../../ui/phone-features";
 import { useApp, useLaptop, useLink, usePoll } from "../../ui/state";
-import { k } from "../../ui/theme";
+import { font, k } from "../../ui/theme";
 
 const PHONE_CAPS = (Object.keys(CAPABILITIES) as Capability[]).filter(
   (k) => CAPABILITIES[k].side === "phone",
@@ -71,6 +73,7 @@ export default function Settings() {
       ? "Connecting…"
       : "Not connected.";
 
+  const [editing, setEditing] = useState(false);
   // Reachable from anywhere: the phone knows the laptop's tunnel (learnt on
   // the same Wi-Fi, from its code, or from its mailbox).
   const away = laptop?.away;
@@ -156,6 +159,21 @@ export default function Settings() {
               right={<Pill label={awayLabel} tone={awayTone} />}
             />
             <Item
+              glyph="pencil"
+              glyphColor={k.brass2}
+              title="Its address from anywhere"
+              sub={
+                laptop.custom
+                  ? `${laptop.custom} (set on this phone)`
+                  : laptop.url
+                    ? `${laptop.url.replace("wss://", "")} (what ${laptop.name} says)`
+                    : `What ${laptop.name} says, once it says one`
+              }
+              subLines={2}
+              chev
+              onPress={() => setEditing(true)}
+            />
+            <Item
               glyph="qr"
               glyphColor={k.brass2}
               title="Scan the laptop's code"
@@ -193,6 +211,18 @@ export default function Settings() {
 
       <PhoneFeatures />
 
+      <H2>Apps</H2>
+      <List>
+        <Item
+          glyph="apps"
+          glyphColor={k.brass2}
+          title="Apps through ekatva"
+          sub="Other Vayu apps on this phone, and what you allowed"
+          chev
+          onPress={() => router.push("/apps")}
+        />
+      </List>
+
       <H2>History</H2>
       <List>
         <Item
@@ -219,6 +249,90 @@ export default function Settings() {
       <Txt size={13} color={k.sub} align="center" style={{ marginTop: 26 }}>
         ekatva {Constants.expoConfig?.version}
       </Txt>
+      {editing && laptop && session ? (
+        <AddressSheet
+          name={laptop.name}
+          now={laptop.custom ?? laptop.url?.replace("wss://", "") ?? ""}
+          custom={!!laptop.custom}
+          onSave={async (custom) => {
+            await session.laptops.update(laptop.key, { custom });
+            await session.journal.record({
+              actor: { key: "local", name: "you" },
+              action: "settings.tunnel",
+              summary: custom
+                ? `${laptop.name} is reached at ${custom} from anywhere`
+                : `${laptop.name} is reached at the address it says`,
+              input: { custom },
+              ok: true,
+            });
+            session.link.wake();
+            toast(custom ? `Using ${custom}` : "Using the laptop's own address");
+            setEditing(false);
+          }}
+          onClose={() => setEditing(false)}
+        />
+      ) : null}
     </Page>
+  );
+}
+
+/** The laptop's address from anywhere, set on this phone: for a domain changed while away. */
+function AddressSheet({
+  name,
+  now,
+  custom,
+  onSave,
+  onClose,
+}: {
+  name: string;
+  now: string;
+  custom: boolean;
+  onSave: (custom: string | null) => Promise<void>;
+  onClose: () => void;
+}) {
+  const [text, setText] = useState(now);
+  const host = hostOf(text);
+  return (
+    <View style={[StyleSheet.absoluteFill, { zIndex: 40 }]}>
+      <Sheet title="Address from anywhere" onClose={onClose}>
+        <Txt size={14} color={k.sub} style={{ marginBottom: 12, lineHeight: 20 }}>
+          {name} tells this phone its address by itself. Set one here only when it changed while the
+          phone was away (a new domain), or to try another.
+        </Txt>
+        <TextInput
+          value={text}
+          onChangeText={setText}
+          autoCapitalize="none"
+          autoCorrect={false}
+          keyboardType="url"
+          placeholder="ekatva-tunnel.example.dev"
+          placeholderTextColor={k.mute}
+          accessibilityLabel="The laptop's address"
+          style={{
+            color: k.text,
+            fontFamily: font.mono,
+            fontSize: 15,
+            backgroundColor: k.ink,
+            borderWidth: 1,
+            borderColor: text && !host ? k.rose : k.line2,
+            borderRadius: 16,
+            paddingHorizontal: 16,
+            paddingVertical: 13,
+            marginBottom: 14,
+          }}
+        />
+        <View style={{ gap: 10 }}>
+          <Btn
+            label="Use this address"
+            kind="solid"
+            disabled={!host}
+            onPress={() => void onSave(host)}
+          />
+          {custom ? (
+            <Btn label={`Use what ${name} says`} onPress={() => void onSave(null)} />
+          ) : null}
+        </View>
+      </Sheet>
+    </View>
   );
 }

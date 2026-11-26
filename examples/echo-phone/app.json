@@ -1,0 +1,22 @@
+{
+  "expo": {
+    "name": "ekatva echo",
+    "slug": "ekatva-echo",
+    "version": "0.1.1",
+    "orientation": "portrait",
+    "android": {
+      "package": "io.github.theyashsawarkar.ekatva.echo"
+    },
+    "plugins": [
+      [
+        "expo-build-properties",
+        {
+          "android": {
+            "minSdkVersion": 29,
+            "buildArchs": ["arm64-v8a", "x86_64"]
+          }
+        }
+      ]
+    ]
+  }
+}

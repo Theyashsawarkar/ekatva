@@ -134,6 +134,29 @@ interface Native {
   ): {
     remove(): void;
   };
+  /** Another Vayu app on the phone (AppBridge.kt): its hello, a call, an event, a reply, or bye. */
+  addListener(
+    event: "onApp",
+    cb: (e: {
+      kind: "hello" | "call" | "emit" | "status" | "reply" | "bye";
+      package: string;
+      cert?: string;
+      status?: "allowed" | "pending" | "denied" | "refused";
+      json?: string;
+    }) => void,
+  ): { remove(): void };
+  /** To an app: "welcome", "result" or "incoming". */
+  appSend(pkg: string, what: "welcome" | "result" | "incoming", json: string): void;
+  appDecide(pkg: string, cert: string, id: string, name: string, allow: boolean): void;
+  appApprovals(): {
+    package: string;
+    cert: string;
+    id: string;
+    name: string;
+    state: "allowed" | "denied";
+  }[];
+  appRevoke(pkg: string): void;
+  appReady(): void;
   /** `data`: unpadded base64url. */
   addListener(
     event: "onBeacon",

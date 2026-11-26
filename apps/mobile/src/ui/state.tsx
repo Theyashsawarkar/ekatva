@@ -153,15 +153,17 @@ export function AppProvider({ children }: { children: ReactNode }) {
       await Session.reset(p);
       setPhase("setup");
     },
-    // Risky actions: the fingerprint itself, never the screen lock instead.
+    // Risky actions: the fingerprint itself, never the screen lock instead; with no
+    // fingerprint enrolled, the screen lock (as unlocking does then), never nothing.
     async confirm(reason) {
       const has = await LocalAuthentication.hasHardwareAsync();
-      if (!has) return true;
+      const enrolled = has && (await LocalAuthentication.isEnrolledAsync());
+      if (!enrolled && (await LocalAuthentication.getEnrolledLevelAsync()) === 0) return true;
       return (
         await LocalAuthentication.authenticateAsync({
           promptMessage: reason,
-          disableDeviceFallback: true,
-          biometricsSecurityLevel: "strong",
+          disableDeviceFallback: enrolled,
+          ...(enrolled ? { biometricsSecurityLevel: "strong" as const } : {}),
           cancelLabel: "Cancel",
         })
       ).success;

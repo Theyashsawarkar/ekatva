@@ -51,6 +51,65 @@ describe("tunnel", () => {
     expect(t.running).toBe(false);
   });
 
+  it("runs a named tunnel: its fixed address, once it reaches Cloudflare", async () => {
+    const calls: string[][] = [];
+    const t = new Tunnel(
+      "named",
+      () => 47100,
+      undefined,
+      10,
+      fakeSpawner(["INF Starting tunnel", "INF Registered tunnel connection connIndex=0"], calls),
+    ).useNamed("ekatva", "ekatva-tunnel.example.dev");
+    expect(await t.start()).toEqual({ url: "wss://ekatva-tunnel.example.dev", lan: [] });
+    expect(calls[0]).toEqual([
+      "cloudflared",
+      "tunnel",
+      "--no-autoupdate",
+      "--url",
+      "http://127.0.0.1:47100",
+      "run",
+      "ekatva",
+    ]);
+    t.stop();
+    // Without its address it says what's missing, and runs nothing.
+    const bare = new Tunnel("named", () => 47100, undefined, 10, fakeSpawner([], calls));
+    expect(await bare.start()).toEqual({ url: null, lan: [] });
+    expect(bare.info()).toMatchObject({
+      state: "missing",
+      problem: expect.stringMatching(/hostname/),
+    });
+    expect(calls).toHaveLength(1);
+  });
+
+  it("changes while running: the old one stops, the new address is said at once", async () => {
+    const calls: string[][] = [];
+    const lines = (cmd: string, args: string[]) =>
+      fakeSpawner(
+        args.includes("run")
+          ? ["INF Registered tunnel connection connIndex=0"]
+          : ["INF |  https://quiet-river-28.trycloudflare.com  |"],
+        calls,
+      )(cmd, args);
+    const t = new Tunnel("cloudflared", () => 47100, undefined, 10, lines);
+    const seen: (string | null)[] = [];
+    t.onChange((i) => seen.push(i.url));
+    t.keep(true);
+    await new Promise((r) => setTimeout(r, 20));
+    const info = await t.reconfigure("named", {
+      name: "ekatva",
+      hostname: "ekatva-tunnel.example.dev",
+    });
+    expect(info).toMatchObject({
+      kind: "named",
+      url: "wss://ekatva-tunnel.example.dev",
+      hostname: "ekatva-tunnel.example.dev",
+    });
+    expect(seen).toContain("wss://quiet-river-28.trycloudflare.com");
+    expect(seen.at(-1)).toBe("wss://ekatva-tunnel.example.dev");
+    expect((await t.reconfigure("none", null)).url).toBeNull();
+    t.stop();
+  });
+
   it("reads ngrok's JSON log", async () => {
     const t = new Tunnel(
       "ngrok",

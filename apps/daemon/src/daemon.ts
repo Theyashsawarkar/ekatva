@@ -6,6 +6,7 @@
 import { execFile } from "node:child_process";
 import { randomBytes } from "node:crypto";
 import { chmodSync, existsSync, renameSync, rmSync } from "node:fs";
+import { mkdir, readFile, writeFile } from "node:fs/promises";
 import { createServer, type Server } from "node:http";
 import { networkInterfaces, userInfo } from "node:os";
 import { dirname, join } from "node:path";
@@ -27,7 +28,6 @@ import {
   webSocketTransport,
 } from "@ekatva/link";
 import {
-  type AppInfo,
   appGrant,
   type Capability,
   channelWebSocket,
@@ -36,6 +36,7 @@ import {
   type Entry,
   grantable,
   Journal,
+  type LaptopApp,
   type LaptopContext,
   type LaptopServices,
   type LocalServices,
@@ -48,6 +49,8 @@ import {
   PRESETS,
   type Route,
   serveRouter,
+  type TunnelInfo,
+  TunnelSettings,
   type Undo,
   verify,
 } from "@ekatva/protocol";
@@ -71,6 +74,7 @@ import { InputService, type Runner } from "./services/input.js";
 import { type Host, JyotiService } from "./services/jyoti.js";
 import { type MediaHost, MediaService } from "./services/media.js";
 import { appCall, isDialer, NotificationBridge, type Prompt } from "./services/notifyBridge.js";
+import { programOf } from "./services/peer.js";
 import { Rendezvous } from "./services/rendezvous.js";
 import { RootBridge } from "./services/root.js";
 import { type ShareHost, ShareInbox } from "./services/share.js";
@@ -247,7 +251,19 @@ export class Daemon {
     this.jyoti = new JyotiService(o.jyotiHost, join(o.stateDir, "jyoti.json"));
     this.appearance = new AppearanceService(o.appearanceHost);
     this.agents = new AgentsService(o.tmux, o.config.agents.roots);
-    this.apps = new AppsService(join(o.stateDir, "apps.json"), (m) => this.log(m));
+    this.apps = new AppsService(
+      join(o.stateDir, "apps.json"),
+      (m) => this.log(m),
+      Date.now,
+      undefined,
+      join(o.stateDir, "apps"),
+    );
+    this.apps.connect({
+      phone: (device, type, path, input) => this.localServices.phone(device, type, path, input),
+      linked: (id) => this.grantApp(id, true),
+      unlinked: (id) => this.grantApp(id, false),
+      notify: (title, body) => this.notify(title, body, false, "apps"),
+    });
     this.media = new MediaService(o.mediaHost);
     this.input = new InputService(o.inputRunner);
     this.terminal = new TerminalService(o.tmux);
@@ -280,6 +296,9 @@ export class Daemon {
       o.config.tunnel.idle_minutes,
       ...(o.tunnelSpawner ? [o.tunnelSpawner] : []),
     );
+    if (o.config.tunnel.kind === "named" && o.config.tunnel.hostname)
+      this.tunnel.useNamed(o.config.tunnel.name, o.config.tunnel.hostname);
+    this.tunnelFile = join(o.stateDir, "tunnel.json");
     // A new tunnel URL: tell the connected phones (link.watch), the window,
     // and every paired phone's mailbox, for the ones away right now.
     let lastUrl: string | null = null;
@@ -315,6 +334,7 @@ export class Daemon {
   async start(): Promise<void> {
     await this.devices.load();
     await this.apps.load();
+    await this.savedTunnel();
     const self = await FileStore.open(join(this.o.stateDir, "journal", "self.jsonl"));
     this.stores.push(self);
     this.journal = new Journal(self, this.id);
@@ -762,7 +782,12 @@ export class Daemon {
         tail: (id, lines) => this.agents.tail(id, lines),
         transcript: (id, lines) => this.agents.transcript(id, lines),
         answer: (id, option, hash) => this.agents.answer(id, option, hash),
-        reply: (id, text) => this.agents.reply(id, text),
+        history: (id, before, limit) => this.agents.history(id, before, limit),
+        follow: (id, signal) => this.agents.follow(id, signal),
+        output: (id, n, epoch) => this.agents.output(id, n, epoch),
+        rename: (id, name) => this.agents.rename(id, name),
+        sendNow: (id) => this.agents.sendNow(id),
+        reply: (id, text, now) => this.agents.reply(id, text, now),
         interrupt: (id) => this.agents.interrupt(id),
         start: (project, prompt, agent) => this.agents.start(project, prompt, agent),
       },
@@ -831,8 +856,9 @@ export class Daemon {
       },
       apps: {
         list: async (granted) => this.apps.list(granted),
-        call: (from, c) => this.apps.call(from, c),
-        emit: (from, e) => this.apps.emit(from, e),
+        call: (from, c) => this.apps.phoneCall(from, c),
+        emit: (from, e) => this.apps.phoneEmit(from, e),
+        upload: this.apps.upload,
       },
       undo: (u) => this.undo(u),
     };
@@ -933,6 +959,19 @@ export class Daemon {
   }
 
   readonly localServices: LocalServices = {
+    tunnel: {
+      set: async (t) => {
+        await mkdir(dirname(this.tunnelFile), { recursive: true, mode: 0o700 });
+        await writeFile(this.tunnelFile, JSON.stringify(t, null, 1), { mode: 0o600 });
+        const was = this.tunnel.info();
+        const info = await this.applyTunnel(t);
+        const where = t.kind === "named" ? t.hostname : t.kind;
+        return {
+          value: info,
+          summary: `Reached from anywhere through ${where} (was ${was.hostname ?? was.kind})`,
+        };
+      },
+    },
     pair: {
       start: async (away): Promise<Offer> => {
         const token = this.tokens.issue();
@@ -1083,22 +1122,32 @@ export class Daemon {
       },
     },
     apps: {
-      register: (manifest, signal) => this.apps.register(manifest, signal),
+      register: (manifest, signal, program) => this.apps.register(manifest, signal, program),
       reply: (r) => this.apps.reply(r),
-      list: async () =>
-        this.apps.laptopApps((id) =>
-          this.devices
-            .all()
-            .filter((d) => d.grants.includes(appGrant(id)))
-            .map((d) => d.key),
+      list: async () => this.laptopApps(),
+      watch: (signal) =>
+        feed(
+          signal,
+          (push) => {
+            const view = () => push({ apps: this.laptopApps(), ...this.apps.state() });
+            const offApps = this.apps.onChange(view);
+            const offDevices = this.devices.onChange(view);
+            return () => {
+              offApps();
+              offDevices();
+            };
+          },
+          async () => ({ apps: this.laptopApps(), ...this.apps.state() }),
         ),
-      call: (device, _from, c) => this.localServices.phone(device, "mutation", "apps.invoke", c),
-      emit: async (device, _from, e) => {
-        await this.localServices.phone(device, "mutation", "apps.emit", e);
-        return null;
-      },
-      phoneApps: async (device) =>
-        (await this.localServices.phone(device, "query", "apps.list", undefined)) as AppInfo[],
+      accept: (id) => this.apps.accept(id),
+      refuse: (id) => this.apps.refuse(id),
+      unrefuse: (id) => this.apps.unrefuse(id),
+      unlink: (id) => this.apps.unlink(id),
+      decideRoute: (id, answer) => this.apps.decideRoute(id, answer),
+      removeRoute: (caller, to) => this.apps.removeRoute(caller, to),
+      call: (c) => this.apps.call(c),
+      emit: (e) => this.apps.emit(e),
+      phoneApps: (device) => this.apps.phoneApps(device),
     },
     phone: async (keyOrName, type, path, input) => {
       const online = [...this.peers.values()];
@@ -1158,6 +1207,46 @@ export class Daemon {
     },
   };
 
+  /** A linked app: every paired phone may reach it (or, unlinked, none may). */
+  private async grantApp(id: string, on: boolean): Promise<void> {
+    for (const d of this.devices.all()) {
+      const set = new Set(d.grants);
+      if (on) {
+        set.add("apps");
+        set.add(appGrant(id));
+      } else set.delete(appGrant(id));
+      await this.devices.put({ ...d, grants: grantable([...set]) });
+    }
+    this.emitDevices();
+  }
+
+  private readonly tunnelFile: string;
+
+  /** The tunnel as set in the window (tunnel.json), over config.toml's. */
+  private async savedTunnel(): Promise<void> {
+    try {
+      const t = TunnelSettings.parse(JSON.parse(await readFile(this.tunnelFile, "utf8")));
+      await this.applyTunnel(t);
+    } catch (e) {
+      if ((e as NodeJS.ErrnoException).code !== "ENOENT") this.log(`tunnel.json: ${e}`);
+    }
+  }
+
+  private applyTunnel(t: TunnelSettings): Promise<TunnelInfo> {
+    const named = t.kind === "named" && t.hostname ? { name: t.name, hostname: t.hostname } : null;
+    return this.tunnel.reconfigure(t.kind, named);
+  }
+
+  /** This laptop's apps, with the devices granted each. */
+  private laptopApps(): LaptopApp[] {
+    return this.apps.laptopApps((id) =>
+      this.devices
+        .all()
+        .filter((d) => d.grants.includes(appGrant(id)))
+        .map((d) => d.key),
+    );
+  }
+
   // ------------------------------------------------------- the local socket
   private async listenLocal(): Promise<void> {
     rmSync(this.o.socketPath, { force: true });
@@ -1167,9 +1256,11 @@ export class Daemon {
     applyWSSHandler({
       wss: this.localWss,
       router: localRouter,
-      createContext: ({ info }): LaptopContext => ({
+      createContext: ({ info, req }): LaptopContext => ({
         // `ekatva mcp` names its agent, so the log says who did it.
         actor: { key: "local", name: agentLabel(me, info.connectionParams?.agent) },
+        agent: agentName(info.connectionParams?.agent) || undefined,
+        peer: () => programOf(req.socket),
         grants: { has: (_c: Capability) => true },
         journal: this.journal,
         services: this.services,
@@ -1191,15 +1282,19 @@ export class Daemon {
 
 export { LinkError, VERSION };
 
+/** The agent a local connection says it acts for, made safe ("" for none). */
+export function agentName(agent: unknown): string {
+  return typeof agent === "string"
+    ? agent
+        .replace(/[^\w .@-]/g, "")
+        .trim()
+        .slice(0, 40)
+    : "";
+}
+
 /** "yash" or "yash via claude": the local user, and the agent acting for them if one said so. */
 export function agentLabel(user: string, agent: unknown): string {
-  const name =
-    typeof agent === "string"
-      ? agent
-          .replace(/[^\w .@-]/g, "")
-          .trim()
-          .slice(0, 40)
-      : "";
+  const name = agentName(agent);
   return name ? `${user} via ${name}` : user;
 }
 

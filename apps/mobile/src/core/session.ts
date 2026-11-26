@@ -5,6 +5,7 @@
  */
 import { type Ntfy, toB64u } from "@ekatva/link";
 import { Journal, type PhoneServices } from "@ekatva/protocol";
+import { type NativeApps, PhoneApps } from "./apps";
 import { type Fs, PhoneFiles } from "./files";
 import type { KV } from "./kv";
 import { Laptops } from "./laptops";
@@ -38,6 +39,10 @@ export interface Platform {
   beacons?: Beacons;
   /** Is there any network at all? */
   online?: () => Promise<boolean>;
+  /** The bridge other Vayu apps on the phone talk to ekatva through (Android). */
+  apps?: NativeApps;
+  /** Where files for apps' calls wait (private to ekatva). */
+  appFilesDir?: string;
 }
 
 /** Without a share host (tests): files go to the app's own folder, nothing opens. */
@@ -59,6 +64,7 @@ export class Session {
     readonly files: PhoneFiles,
     readonly services: PhoneServices,
     readonly link: LinkManager,
+    readonly apps: PhoneApps,
   ) {}
 
   /** This phone's key, as the laptop knows it. */
@@ -108,9 +114,41 @@ export class Session {
     for (const l of laptops.all()) void p.lines(`log-${l.key}`).remove?.();
     const files = new PhoneFiles(p.fs, await p.roots(), p.undoDir);
     const share = new PhoneShareInbox(p.fs, p.shareHost ?? noShare);
-    const services = phoneServices(p.device, files, share);
+    let link: LinkManager | null = null;
+    const apps = new PhoneApps(
+      p.apps ?? null,
+      p.kv,
+      () => {
+        const client = link?.client;
+        const state = link?.state;
+        if (!client || state?.status !== "online") return null;
+        return {
+          name: laptops.get(state.laptop)?.name ?? "the laptop",
+          invoke: (c) => client.apps.invoke.mutate(c),
+          emit: (e) => client.apps.emit.mutate(e),
+          list: () => client.apps.list.query(),
+          upload: {
+            begin: (c) => client.apps.upload.begin.mutate(c),
+            put: (c) => client.apps.upload.put.mutate(c),
+            finish: (c) => client.apps.upload.finish.mutate(c),
+            cancel: (c) => client.apps.upload.cancel.mutate(c),
+          },
+        };
+      },
+      {
+        ...(p.appFilesDir ? { files: { fs: p.fs, dir: p.appFilesDir } } : {}),
+        // Linking an app is what lets the laptop reach it: no second switch to find.
+        linked: async () => {
+          for (const l of laptops.all())
+            if (!l.grants.includes("phone.apps"))
+              await laptops.update(l.key, { grants: [...l.grants, "phone.apps"] });
+        },
+      },
+    );
+    await apps.start();
+    const services = phoneServices(p.device, files, share, apps.services());
     let session: Session | null = null;
-    const link = new LinkManager({
+    link = new LinkManager({
       secrets,
       laptops,
       journal,
@@ -122,7 +160,7 @@ export class Session {
       ...(p.beacons ? { beacons: p.beacons } : {}),
       ...(p.online ? { online: p.online } : {}),
     });
-    session = new Session(p, secrets, laptops, journal, files, services, link);
+    session = new Session(p, secrets, laptops, journal, files, services, link, apps);
     return session;
   }
 }

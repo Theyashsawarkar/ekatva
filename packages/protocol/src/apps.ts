@@ -12,6 +12,14 @@
  * Each app declares itself in a manifest: its methods and events, why it
  * wants each, and how risky each is. A device reaches an app only with the
  * `app:<id>` grant (off until you give it), checked on the side that runs it.
+ *
+ * Each side's hub links its apps: an app asks once, you accept once (in
+ * Darpaṇa on the laptop, in ekatva on the phone), and the link is
+ * permanent. A call is addressed to an app on the other side; one from a
+ * different app (or an agent) than the one it reaches is a *route*, which
+ * you allow once on the caller's side. A call can carry files: the hubs
+ * move them first, and the app gets a path (laptop) or a content URI
+ * (phone) it alone may read.
  */
 import { z } from "zod";
 
@@ -65,12 +73,49 @@ export const APP_KEEP_MAX_S = 24 * 60 * 60;
 /** Kept events per app; the oldest go first. */
 export const APP_KEEP_MAX = 200;
 
+/**
+ * Who calls, inside its device: an app ("nada"), an agent ("agent:claude"),
+ * or "you" (ekatva's own CLI and screens).
+ */
+export const AppCaller = z
+  .string()
+  .regex(/^(you|agent:[\w .@-]{1,40}|[a-z][a-z0-9-]{1,31})$/, "an app id, agent:NAME or you");
+export type AppCaller = z.infer<typeof AppCaller>;
+
+/** At most this many files on one call. */
+export const APP_FILES_MAX = 16;
+
+/**
+ * A file on a call. The sender gives `path` (laptop) or `uri` (phone); the
+ * receiving app gets its own copy's `path` (laptop) or `uri` (phone).
+ */
+export const AppFile = z.object({
+  name: z.string().min(1).max(200),
+  size: z.number().int().min(0),
+  mime: z.string().max(100).default("application/octet-stream"),
+  path: z.string().max(4096).optional(),
+  uri: z.string().max(4096).optional(),
+});
+export type AppFile = z.infer<typeof AppFile>;
+
 export const AppCall = z.object({
   app: AppId,
   method: AppMethodName,
   input: z.unknown(),
+  /** The calling app or agent (the hub sets it; absent: the app's own other half, or you). */
+  caller: AppCaller.optional(),
+  /** Files the hubs moved across first (each is the receiving side's copy). */
+  files: z.array(AppFile).max(APP_FILES_MAX).default([]),
 });
 export type AppCall = z.infer<typeof AppCall>;
+export type AppCallInput = z.input<typeof AppCall>;
+
+/** "phone:vagdevi" → the side and the app. */
+export function parseAddress(to: string): { side: "laptop" | "phone"; app: AppId } {
+  const m = /^(laptop|phone):([a-z][a-z0-9-]{1,31})$/.exec(to);
+  if (!m) throw new Error(`"${to}" isn't an app's address (phone:APP or laptop:APP)`);
+  return { side: m[1] as "laptop" | "phone", app: m[2] as AppId };
+}
 
 export const AppEvent = z.object({
   app: AppId,
@@ -97,8 +142,13 @@ export const AppInfo = z.object({
 });
 export type AppInfo = z.infer<typeof AppInfo>;
 
-/** Who sent a message: the device (its key and name). */
-export const AppFrom = z.object({ key: z.string(), name: z.string() });
+/** Who sent a message: the device (its key and name), and the app or agent on it. */
+export const AppFrom = z.object({
+  key: z.string(),
+  name: z.string(),
+  /** The calling app or agent; absent: you (or an app's own other half). */
+  app: z.string().optional(),
+});
 export type AppFrom = z.infer<typeof AppFrom>;
 
 /** What a registered app receives. */
@@ -110,6 +160,7 @@ export const AppIncoming = z.discriminatedUnion("kind", [
     from: AppFrom,
     method: z.string(),
     input: z.unknown(),
+    files: z.array(AppFile).default([]),
   }),
   z.object({
     kind: z.literal("event"),
@@ -118,6 +169,12 @@ export const AppIncoming = z.discriminatedUnion("kind", [
     data: z.unknown(),
     /** When it was sent (ms), for a kept one that waited. */
     at: z.number(),
+  }),
+  /** Where the app's link stands: waiting for you, linked, or refused. */
+  z.object({
+    kind: z.literal("status"),
+    status: z.enum(["waiting", "linked", "refused"]),
+    why: z.string().optional(),
   }),
 ]);
 export type AppIncoming = z.infer<typeof AppIncoming>;
@@ -143,8 +200,66 @@ export const LaptopApp = AppInfo.extend({
   grantedTo: z.array(z.string()),
   /** When it last registered (ms), or null if it never has since the service started. */
   seen: z.number().nullable(),
+  /** The program that linked it ("python3 …/bridge.py"), when it could be found. */
+  program: z.string().nullable().default(null),
 });
 export type LaptopApp = z.infer<typeof LaptopApp>;
+
+/** A laptop app asking to link, waiting for you in Darpaṇa. */
+export const AppLinkRequest = z.object({
+  id: AppId,
+  name: z.string(),
+  version: z.string(),
+  /** The program that asked ("python3 /home/…/nada/bridge.py"), when it can be found. */
+  program: z.string().nullable(),
+  at: z.number(),
+  methods: z.array(AppMethod),
+  events: z.array(AppMethod),
+});
+export type AppLinkRequest = z.infer<typeof AppLinkRequest>;
+
+/** A laptop app you linked: permanent until you unlink it. */
+export const AppLinkRecord = z.object({
+  id: AppId,
+  name: z.string(),
+  program: z.string().nullable(),
+  at: z.number(),
+});
+export type AppLinkRecord = z.infer<typeof AppLinkRecord>;
+
+/** A route you allowed: this caller may reach that app ("phone:vagdevi"). */
+export const AppRoute = z.object({
+  caller: AppCaller,
+  to: z.string(),
+  at: z.number(),
+});
+export type AppRoute = z.infer<typeof AppRoute>;
+
+/** A new route waiting for you: the call waits with it (up to a minute). */
+export const AppRouteRequest = z.object({
+  id: z.string(),
+  caller: AppCaller,
+  /** How you see the caller: "Claude", "nāda". */
+  callerName: z.string(),
+  to: z.string(),
+  /** The target app's name, and the method's "why" ("Add a book"). */
+  toName: z.string(),
+  method: z.string(),
+  why: z.string(),
+  risk: z.enum(["low", "medium", "high"]),
+  files: z.array(z.object({ name: z.string(), size: z.number() })),
+  at: z.number(),
+});
+export type AppRouteRequest = z.infer<typeof AppRouteRequest>;
+
+/** What this laptop's window shows on its Apps page, all at once. */
+export const AppsState = z.object({
+  requests: z.array(AppLinkRequest),
+  routeRequests: z.array(AppRouteRequest),
+  refused: z.array(z.string()),
+  routes: z.array(AppRoute),
+});
+export type AppsState = z.infer<typeof AppsState>;
 
 /** What a call or event did, for the action log. */
 export interface AppOutcome<T> {

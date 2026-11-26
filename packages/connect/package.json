@@ -1,0 +1,21 @@
+{
+  "name": "@ekatva/connect",
+  "version": "0.1.1",
+  "private": true,
+  "description": "For a Vayu phone app to talk to its laptop half through ekatva (an Expo module, Android).",
+  "main": "src/index.ts",
+  "types": "src/index.ts",
+  "scripts": {
+    "typecheck": "tsc -p tsconfig.json --noEmit",
+    "test": "vitest run"
+  },
+  "peerDependencies": {
+    "expo": "*"
+  },
+  "devDependencies": {
+    "@ekatva/config": "workspace:*",
+    "typescript": "7.0.2",
+    "vitest": "5.0.5"
+  },
+  "type": "module"
+}

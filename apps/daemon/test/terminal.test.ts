@@ -12,7 +12,8 @@ afterAll(async () => {
   await tmux(["kill-server"]).catch(() => "");
 });
 
-const until = async (ok: () => Promise<boolean>, ms = 5000) => {
+// A shell starting under the full parallel run can take a while.
+const until = async (ok: () => Promise<boolean>, ms = 20_000) => {
   const end = Date.now() + ms;
   while (!(await ok()) && Date.now() < end) await new Promise((r) => setTimeout(r, 100));
 };

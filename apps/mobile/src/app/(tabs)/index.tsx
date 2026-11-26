@@ -210,7 +210,7 @@ export default function Home() {
       {ask ? (
         <AsksRow
           tone="amber"
-          title={`${ask.session} asks you`}
+          title={`${ask.name || ask.session} asks you`}
           sub={ask.question?.text ?? ""}
           action="Answer"
           onPress={() => router.push(agentRoute(ask.id))}

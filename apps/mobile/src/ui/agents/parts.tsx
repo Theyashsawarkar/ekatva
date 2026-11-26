@@ -23,6 +23,9 @@ export const ago = (ms: number) => {
   return m < 1 ? "a moment" : m < 60 ? `${m} min` : `${Math.round(m / 60)} h`;
 };
 
+/** What the agent calls the session (a laptop from before that: tmux's name). */
+export const nameOf = (a: AgentSession) => a.name || a.session;
+
 export const base = (p: string) => p.replace(/\/+$/, "").split("/").pop() || "~";
 
 /** A rounded square with the name's first letter, and its state as a dot. */
@@ -39,7 +42,7 @@ export function Avatar({ a }: { a: AgentSession }) {
       }}
     >
       <Txt display w="700" size={17}>
-        {a.session.slice(0, 1).toUpperCase()}
+        {nameOf(a).slice(0, 1).toUpperCase()}
       </Txt>
       <View
         style={{

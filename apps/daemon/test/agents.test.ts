@@ -60,7 +60,7 @@ afterAll(async () => {
   try {
     execFileSync("tmux", ["-L", socket, "kill-server"]);
   } catch {}
-  await fs.rm(dir, { recursive: true, force: true });
+  await fs.rm(dir, { recursive: true, force: true, maxRetries: 10, retryDelay: 100 });
 });
 
 describe("agents in tmux", () => {

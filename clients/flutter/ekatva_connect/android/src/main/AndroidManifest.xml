@@ -1,0 +1,4 @@
+<manifest xmlns:android="http://schemas.android.com/apk/res/android">
+  <!-- Android lets this app see ekatva only when it says so. -->
+  <queries><package android:name="io.github.theyashsawarkar.ekatva" /></queries>
+</manifest>

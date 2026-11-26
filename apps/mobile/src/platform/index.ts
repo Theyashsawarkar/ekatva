@@ -17,6 +17,7 @@ import { toB64 } from "../core/b64";
 /** The native module, when this build has it (a local const narrows in closures). */
 const native = phone;
 
+import type { NativeApps } from "../core/apps";
 import { clip } from "../core/clip";
 import type { Fs, FsStat } from "../core/files";
 import type { KV } from "../core/kv";
@@ -353,6 +354,47 @@ const beacons: Platform["beacons"] = native
     }
   : undefined;
 
+/** Other Vayu apps on the phone, through AppBridgeService (none in Expo Go). */
+const apps: NativeApps | undefined = native
+  ? {
+      onMessage: (cb) => {
+        const sub = native.addListener("onApp", (e) => {
+          if (e.kind === "bye") cb({ kind: "bye", package: e.package });
+          else if (e.kind === "hello")
+            cb({
+              kind: "hello",
+              package: e.package,
+              cert: e.cert ?? "",
+              status: e.status ?? "refused",
+              json: e.json ?? "{}",
+            });
+          else cb({ kind: e.kind, package: e.package, json: e.json ?? "{}" });
+        });
+        // Listening now: the apps already connected say hello again.
+        native.appReady();
+        return () => sub.remove();
+      },
+      send: (pkg, what, json) => native.appSend(pkg, what, json),
+      decide: async (a) => native.appDecide(a.package, a.cert, a.id, a.name, a.state === "allowed"),
+      approvals: async () => native.appApprovals(),
+      revoke: async (pkg) => native.appRevoke(pkg),
+      notify: (id, title, text) => {
+        try {
+          native.showLaptopNotification(id, "ekatva", title, text, null, null, 1);
+        } catch {
+          // notifications not allowed: the sheet shows when ekatva opens
+        }
+      },
+      unnotify: (id) => {
+        try {
+          native.closeLaptopNotification(id);
+        } catch {
+          // already gone
+        }
+      },
+    }
+  : undefined;
+
 /** The answer, until the app comes back to the front (the grant may have changed meanwhile). */
 let rootsCache: string[] | null = null;
 AppState.addEventListener("change", (st) => {
@@ -405,6 +447,11 @@ export function platform(onAlert: (m: string) => void): Platform {
     ...(box ? { box } : {}),
     ntfy: new Ntfy(),
     ...(beacons ? { beacons } : {}),
+    ...(apps ? { apps } : {}),
+    // The native side reads and writes here too (AppBridge.FILES).
+    appFilesDir: new Directory(Paths.cache, "app-files").uri
+      .replace(/^file:\/\//, "")
+      .replace(/\/$/, ""),
     online: async () => {
       const n = await Network.getNetworkStateAsync();
       return n.isConnected !== false;

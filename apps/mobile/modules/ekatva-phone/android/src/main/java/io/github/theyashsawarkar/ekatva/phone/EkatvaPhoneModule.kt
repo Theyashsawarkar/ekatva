@@ -139,7 +139,26 @@ class EkatvaPhoneModule : Module() {
 
   override fun definition() = ModuleDefinition {
     Name("EkatvaPhone")
-    Events("onCall", "onSms", "onNotification", "onBeacon", "onRing", "onLaptopNotificationDismissed", "onShare")
+    Events("onCall", "onSms", "onNotification", "onBeacon", "onRing", "onLaptopNotificationDismissed", "onShare", "onApp")
+
+    // ---- other Vayu apps on this phone, through AppBridgeService (core/apps.ts)
+    /** To an app: "welcome", "result" or "incoming", with its JSON. */
+    Function("appSend") { pkg: String, what: String, json: String ->
+      val code = when (what) {
+        "welcome" -> AppBridge.WELCOME
+        "result" -> AppBridge.RESULT
+        else -> AppBridge.INCOMING
+      }
+      AppBridge.send(context, pkg, code, json)
+    }
+    /** Your decision on an app, pinned to its package, certificate and id. */
+    Function("appDecide") { pkg: String, cert: String, id: String, name: String, allow: Boolean ->
+      AppBridge.decide(context, pkg, cert, id, name, allow)
+    }
+    Function("appApprovals") { AppBridge.approvals(context) }
+    Function("appRevoke") { pkg: String -> AppBridge.revoke(context, pkg) }
+    /** ekatva's JS listens now: the apps already connected say hello again. */
+    Function("appReady") { AppBridge.ready(context) }
 
     // ---- "Share → ekatva" from other apps
     OnNewIntent { intent ->
@@ -156,12 +175,14 @@ class EkatvaPhoneModule : Module() {
       }
       Ring.listener = { on -> sendEvent("onRing", mapOf("ringing" to on)) }
       LaptopNotifications.listener = { id -> sendEvent("onLaptopNotificationDismissed", mapOf("id" to id)) }
+      AppBridge.listener = { m -> sendEvent("onApp", m) }
     }
 
     OnDestroy {
       Notifications.listener = null
       Ring.listener = null
       LaptopNotifications.listener = null
+      AppBridge.listener = null
       callReceiver?.let { runCatching { context.unregisterReceiver(it) } }
       smsReceiver?.let { runCatching { context.unregisterReceiver(it) } }
       stopBeacons()
@@ -306,11 +327,13 @@ class EkatvaPhoneModule : Module() {
     Function("startLink") { text: String ->
       val i = Intent(context, LinkService::class.java).putExtra(LinkService.EXTRA_TEXT, text)
       context.startForegroundService(i)
+      BootReceiver.setPaired(context, true)
       holdJs()
     }
 
     Function("stopLink") {
       context.stopService(Intent(context, LinkService::class.java))
+      BootReceiver.setPaired(context, false)
       releaseJs()
     }
 

@@ -16,6 +16,7 @@ import {
 import {
   channelWebSocket,
   Journal,
+  type LaptopAppsView,
   type LaptopRouter,
   type LocalRouter,
   MemoryStore,
@@ -146,6 +147,34 @@ async function phone(opts: {
 const laptopKeyFrom = async () =>
   parseOffer((await local.admin.pair.start.mutate({ away: false })).uri);
 
+/** The Apps page as it is now. */
+const appsView = () =>
+  new Promise<LaptopAppsView>((ok, no) => {
+    const sub = local.apps.watch.subscribe(undefined, {
+      onData: (v) => {
+        sub.unsubscribe();
+        ok(v);
+      },
+      onError: no,
+    });
+  });
+/** Accepts an app asking to link, once it has asked. */
+async function acceptApp(id: string): Promise<void> {
+  for (let i = 0; i < 100; i++) {
+    if ((await appsView()).requests.some((r) => r.id === id)) break;
+    await new Promise((r) => setTimeout(r, 20));
+  }
+  await local.apps.accept.mutate({ id });
+}
+async function waitingRoute() {
+  for (let i = 0; i < 100; i++) {
+    const r = (await appsView()).routeRequests[0];
+    if (r) return r;
+    await new Promise((res) => setTimeout(res, 20));
+  }
+  throw new Error("no route was asked for");
+}
+
 describe("the daemon, end to end", () => {
   let p: Awaited<ReturnType<typeof phone>>;
 
@@ -231,13 +260,18 @@ describe("the daemon, end to end", () => {
       },
       { socket: join(root, "ekatva.sock") },
     ).on("say", (input, from) => ({ said: input, to: from.name }));
-    for (let i = 0; i < 100; i++) {
-      if ((await local.apps.list.query()).some((a) => a.id === "echo" && a.online)) break;
-      await new Promise((r) => setTimeout(r, 20));
-    }
     const say = () => p.client.apps.invoke.mutate({ app: "echo", method: "say", input: "hi" });
-    // Neither "apps" nor "app:echo": refused.
+    // Not linked yet (it waits for you), and no grant: refused.
+    for (let i = 0; i < 100 && echo.status() !== "waiting"; i++)
+      await new Promise((r) => setTimeout(r, 20));
+    expect(echo.status()).toBe("waiting");
     await expect(say()).rejects.toMatchObject({ data: { code: "FORBIDDEN" } });
+    // Accepted in Darpaṇa: linked, and every paired phone may reach it.
+    await acceptApp("echo");
+    for (let i = 0; i < 100 && echo.status() !== "linked"; i++)
+      await new Promise((r) => setTimeout(r, 20));
+    expect(await say()).toEqual({ said: "hi", to: "Pixel 8" });
+    // Taken back for this phone: refused again.
     await local.admin.devices.grant.mutate({
       key: "Pixel 8",
       grants: ["status", "journal", "apps"],
@@ -253,6 +287,8 @@ describe("the daemon, end to end", () => {
     ]);
     const app = (await local.apps.list.query()).find((a) => a.id === "echo");
     expect(app?.grantedTo).toHaveLength(1);
+    // Who asked: the program at the other end of the socket.
+    expect(app?.program).toMatch(/node/);
     const log = await local.admin.log.list.query({ host: "self" });
     expect(log.findLast((e) => e.action === "apps.invoke")).toMatchObject({
       ok: true,
@@ -282,6 +318,11 @@ describe("the daemon, end to end", () => {
     for (let i = 0; i < 200 && !out.includes("registered"); i++)
       await new Promise((r) => setTimeout(r, 20));
     expect(out).toContain("echo: registered");
+    await acceptApp("echo-py");
+    for (let i = 0; i < 100 && !out.includes("echo: linked"); i++)
+      await new Promise((r) => setTimeout(r, 20));
+    expect(out).toContain("echo: waiting");
+    expect(out).toContain("echo: linked");
     await local.admin.devices.grant.mutate({
       key: "Pixel 8",
       grants: ["status", "journal", "apps", "app:echo-py"],
@@ -300,6 +341,39 @@ describe("the daemon, end to end", () => {
     const before = (await local.admin.log.list.query({ host: "self" })).length;
     await p.client.apps.invoke.mutate({ app: "echo-py", method: "time", input: null });
     expect((await local.admin.log.list.query({ host: "self" })).length).toBe(before);
+
+    // An agent reaches it with a file: you're asked once, and it gets the file.
+    const ws = createWSClient({
+      url: `ws+unix://${join(root, "ekatva.sock")}:/`,
+      WebSocket: WebSocket as never,
+      connectionParams: { agent: "claude" },
+    });
+    closers.push(() => ws.close());
+    const agent = createTRPCClient<LocalRouter>({ links: [wsLink({ client: ws })] });
+    const book = join(root, "Monsoon Letters.epub");
+    await fs.writeFile(book, "made-up book");
+    const call = agent.apps.invoke.mutate({ to: "laptop:echo-py", method: "files", files: [book] });
+    const req = await waitingRoute();
+    expect(req).toMatchObject({ caller: "agent:claude", to: "laptop:echo-py" });
+    await local.apps.route.mutate({ id: req.id, answer: "once" });
+    expect(await call).toEqual({
+      files: [{ name: "Monsoon Letters.epub", size: 12 }],
+      from: "agent:claude",
+    });
+    const entries = await local.admin.log.list.query({ host: "self" });
+    expect(entries.some((e) => e.summary === "claude → Echo: files (Monsoon Letters.epub)")).toBe(
+      true,
+    );
+    // An agent can't pass for an app to skip the question.
+    const posing = agent.apps.invoke.mutate({
+      to: "laptop:echo-py",
+      method: "time",
+      as: "echo-py",
+    });
+    const again = await waitingRoute();
+    expect(again.caller).toBe("agent:claude");
+    await local.apps.route.mutate({ id: again.id, answer: "refuse" });
+    await expect(posing).rejects.toThrow("you didn't let claude use Echo");
     py.kill();
   });
 

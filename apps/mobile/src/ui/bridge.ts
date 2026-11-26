@@ -4,9 +4,11 @@
  * checks), and the foreground service that keeps the link up in the
  * background while a laptop is paired.
  */
+
 import { useEffect } from "react";
 import { AppRegistry } from "react-native";
 import { phone } from "../../modules/ekatva-phone";
+import { APP_REQUEST } from "../core/apps";
 import type { Session } from "../core/session";
 
 // Held by the link service while a laptop is paired (EkatvaPhoneModule.holdJs):
@@ -113,6 +115,8 @@ export function usePhoneBridge(session: Session | null): void {
       ),
       // A laptop notification swiped away here: gone on the laptop too.
       native.addListener("onLaptopNotificationDismissed", ({ id }) => {
+        // ekatva's own (an app asking to use it) aren't the laptop's.
+        if (id.startsWith(APP_REQUEST)) return;
         void session.link.client?.notifications.dismiss.mutate({ id }).catch(() => undefined);
       }),
     ];

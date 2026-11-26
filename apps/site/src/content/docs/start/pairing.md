@@ -82,6 +82,24 @@ about either:
    then it's replaced by a new one. Install `cloudflared` (on Arch, `pacman -S
    cloudflared`); no account needed.
 
+   **Your own domain** is better, if it's on Cloudflare: one fixed address
+   that never changes, so there's nothing to look up after a drop.
+
+   ```sh
+   cloudflared tunnel login                        # once: pick your domain
+   cloudflared tunnel create ekatva
+   cloudflared tunnel route dns ekatva ekatva-tunnel.example.dev
+   ekatva tunnel named ekatva-tunnel.example.dev   # now, no restart
+   ```
+
+   Or in Darpaṇa: Devices, From anywhere, **Change the address**. You can
+   change it again any time while it runs; the phones hear the new address
+   at once. A phone that was away when it changed can be told in its
+   Settings, **Its address from anywhere**. The address must be one level
+   under your domain (`ekatva-tunnel.example.dev`, not
+   `tunnel.ekatva.example.dev`): Cloudflare's free certificate covers only
+   that.
+
 The phone learns the tunnel's address three ways, so it's never stuck:
 
 - **On the same Wi-Fi, by itself.** While linked, the laptop tells the phone
@@ -98,6 +116,11 @@ The phone learns the tunnel's address three ways, so it's never stuck:
   the new one there, and a phone that can't reach the old address reads it
   and connects. If there's nothing new it asks "where are you?" and the
   laptop answers.
+
+**After a restart.** The laptop reconnects by itself once you've logged in.
+The phone's keys stay locked until your fingerprint opens them, so after the
+phone restarts (or ekatva is updated) it shows one notification, **Tap to
+reconnect to your laptop**: tap it, touch the sensor, and it's linked again.
 
 Not heard on this network (also when you scan the code), the phone tries
 the tunnel first, and gives it up to 10 seconds to open; once it hears

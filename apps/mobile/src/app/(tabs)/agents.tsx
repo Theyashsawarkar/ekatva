@@ -8,7 +8,7 @@ import type { AgentSession } from "@ekatva/protocol";
 import { router } from "expo-router";
 import { View } from "react-native";
 import { stateOf } from "../../ui/agent-blocks";
-import { Asks, Avatar, ago, base, left, Spin, useNow } from "../../ui/agents/parts";
+import { Asks, Avatar, ago, base, left, nameOf, Spin, useNow } from "../../ui/agents/parts";
 import { agentRoute } from "../../ui/agents/route";
 import { errorText } from "../../ui/errors";
 import { Icon } from "../../ui/icon";
@@ -54,19 +54,20 @@ export default function Agents() {
 
   const row = (a: AgentSession) => {
     const st = stateOf(a);
+    const wait = a.queued ? `, ${a.queued} queued` : "";
     const sub = a.question
       ? `In ${base(a.project)}, asked ${ago(a.since)} ago`
       : a.state === "working"
-        ? a.activity || "Working"
+        ? `${a.activity || "Working"}${wait}`
         : a.state === "done"
           ? a.activity || `Finished ${ago(a.since)} ago`
-          : "Nothing running";
+          : `In ${base(a.project)}, idle ${ago(a.since)}`;
     const fresh = unseen(a);
     return (
       <Item
         key={a.id}
         glyph={<Avatar a={a} />}
-        title={a.session}
+        title={nameOf(a)}
         sub={
           <View style={{ flexDirection: "row", alignItems: "center", gap: 5, marginTop: 2 }}>
             {a.state === "working" && !a.question ? <Spin /> : null}
@@ -84,7 +85,7 @@ export default function Agents() {
           ) : undefined
         }
         chev
-        label={`${a.session}, ${st.says}${fresh ? ", new" : ""}, in ${base(a.project)}`}
+        label={`${nameOf(a)}, ${st.says}${fresh ? ", new" : ""}, in ${base(a.project)}`}
         onPress={() => open(a)}
         style={{ paddingVertical: 14 }}
       />

@@ -1,6 +1,8 @@
 /**
  * Reaching the laptop from outside the LAN.
  *
+ *   named         your own Cloudflare tunnel on your domain: one fixed address
+ *                 (wss://ekatva-tunnel.example.dev), whatever network the laptop is on
  *   cloudflared   a free quick tunnel (no account): wss://<random>.trycloudflare.com
  *   ngrok         your ngrok account's tunnel
  *   tailscale     no tunnel: the laptop's tailnet address, for phones on your tailnet
@@ -25,7 +27,7 @@
  */
 import { type ChildProcess, execFile, spawn } from "node:child_process";
 
-export type TunnelKind = "cloudflared" | "ngrok" | "tailscale" | "none";
+export type TunnelKind = "named" | "cloudflared" | "ngrok" | "tailscale" | "none";
 
 export interface Reach {
   /** wss:// URL of a tunnel, if one runs. */
@@ -45,6 +47,8 @@ export type TunnelState = "off" | "starting" | "up" | "missing";
 export interface TunnelInfo {
   kind: TunnelKind;
   state: TunnelState;
+  hostname: string | null;
+  name: string | null;
   url: string | null;
   /** Kept up all the time (a phone is paired), or only on demand. */
   always: boolean;
@@ -60,6 +64,8 @@ const URL_IN = {
   cloudflared: /https:\/\/([a-z0-9-]+\.trycloudflare\.com)/,
   ngrok: /"url":"https:\/\/([^"]+)"/,
 };
+/** A named tunnel's address is known; it's up once cloudflared has a connection to Cloudflare. */
+const NAMED_UP = /Registered tunnel connection/;
 
 /** After it dies: try again after 2 s, 4 s, 8 s… never more than this apart. */
 const RESTART_MAX_MS = 5 * 60_000;
@@ -104,9 +110,11 @@ export class Tunnel {
   private lastOk = 0;
   private misses = 0;
   private checking: Promise<Reach> | null = null;
+  /** For kind "named": the tunnel's name in your Cloudflare account, and its address. */
+  private named: { name: string; hostname: string } | null = null;
 
   constructor(
-    readonly kind: TunnelKind,
+    private _kind: TunnelKind,
     private readonly port: () => number,
     private readonly log: (m: string) => void = () => undefined,
     private readonly idleMinutes = 10,
@@ -116,6 +124,36 @@ export class Tunnel {
     private readonly probe: Probe = reachable,
     private readonly healthEveryMs = HEALTH_EVERY_MS,
   ) {}
+
+  get kind(): TunnelKind {
+    return this._kind;
+  }
+
+  /**
+   * New settings while running: the old tunnel stops, the new one opens if
+   * it's kept up, and listeners hear its new address.
+   */
+  async reconfigure(
+    kind: TunnelKind,
+    named: { name: string; hostname: string } | null,
+  ): Promise<TunnelInfo> {
+    const always = this.always;
+    this.always = false;
+    this.halt();
+    this._kind = kind;
+    this.named = named;
+    this.failures = 0;
+    if (always) this.keep(true);
+    else for (const cb of this.listeners) cb(this.info());
+    if (always && kind !== "none" && kind !== "tailscale") await this.start();
+    return this.info();
+  }
+
+  /** A named tunnel: run `name`, reached at `hostname` (its DNS record points at the tunnel). */
+  useNamed(name: string, hostname: string): this {
+    this.named = { name, hostname };
+    return this;
+  }
 
   get running(): boolean {
     return this.url !== null;
@@ -129,6 +167,8 @@ export class Tunnel {
       always: this.always,
       since: this.since,
       problem: this.problem,
+      hostname: this.named?.hostname ?? null,
+      name: this.named?.name ?? null,
     };
   }
 
@@ -158,7 +198,9 @@ export class Tunnel {
     if (this.kind === "none" || this.kind === "tailscale") return;
     if (on) {
       this.clearIdle();
-      this.log(`keeping the ${this.kind} tunnel up while a phone is paired`);
+      this.log(
+        `keeping the tunnel (${this.named?.hostname ?? this.kind}) up while a phone is paired`,
+      );
       void this.start();
     } else {
       if (this.restartTimer) clearTimeout(this.restartTimer);
@@ -195,12 +237,20 @@ export class Tunnel {
   }
 
   private spawnTunnel(timeoutMs: number): Promise<Reach> {
-    const kind = this.kind as "cloudflared" | "ngrok";
+    const kind = this.kind as "named" | "cloudflared" | "ngrok";
+    const program = kind === "named" ? "cloudflared" : kind;
     const target = `127.0.0.1:${this.port()}`;
+    const named = this.named;
+    if (kind === "named" && !named) {
+      this.setState("missing", 'set [tunnel] hostname for kind = "named"');
+      return Promise.resolve({ url: null, lan: [] });
+    }
     const args =
-      kind === "cloudflared"
-        ? ["tunnel", "--no-autoupdate", "--url", `http://${target}`]
-        : ["http", target, "--log", "stdout", "--log-format", "json"];
+      kind === "named"
+        ? ["tunnel", "--no-autoupdate", "--url", `http://${target}`, "run", named?.name ?? ""]
+        : kind === "cloudflared"
+          ? ["tunnel", "--no-autoupdate", "--url", `http://${target}`]
+          : ["http", target, "--log", "stdout", "--log-format", "json"];
     if (this.restartTimer) clearTimeout(this.restartTimer);
     this.restartTimer = null;
     this.setState("starting");
@@ -213,29 +263,39 @@ export class Tunnel {
       };
       let child: ChildProcess;
       try {
-        child = this.spawner(kind, args);
+        child = this.spawner(program, args);
       } catch {
-        this.missing(kind);
+        this.missing(program);
         settle({ url: null, lan: [] });
         return;
       }
       this.child = child;
       const timer = setTimeout(() => {
-        this.log(`${kind} gave no URL in ${timeoutMs / 1000} s`);
+        this.log(
+          kind === "named"
+            ? `cloudflared didn't reach Cloudflare in ${timeoutMs / 1000} s`
+            : `${kind} gave no URL in ${timeoutMs / 1000} s`,
+        );
         // Kill it: the exit handler retries when it's kept up.
         if (this.child === child) child.kill("SIGTERM");
         settle({ url: null, lan: [] });
       }, timeoutMs);
       const scan = (data: Buffer) => {
-        const m = URL_IN[kind].exec(String(data));
-        if (m && this.child === child && this.url !== `wss://${m[1]}`) {
+        const text = String(data);
+        const host =
+          kind === "named"
+            ? NAMED_UP.test(text)
+              ? named?.hostname
+              : undefined
+            : URL_IN[kind].exec(text)?.[1];
+        if (host && this.child === child && this.url !== `wss://${host}`) {
           clearTimeout(timer);
-          this.url = `wss://${m[1]}`;
+          this.url = `wss://${host}`;
           this.failures = 0;
           this.lastOk = Date.now();
           this.misses = 0;
           this.watchHealth();
-          this.log(`reachable from anywhere through ${kind}`);
+          this.log(`reachable from anywhere through ${named?.hostname ?? kind}`);
           this.setState("up");
           settle({ url: this.url, lan: [] });
         }
@@ -245,7 +305,7 @@ export class Tunnel {
       child.on("error", (e: NodeJS.ErrnoException) => {
         clearTimeout(timer);
         if (this.child === child) this.child = null;
-        if (e.code === "ENOENT") this.missing(kind);
+        if (e.code === "ENOENT") this.missing(program);
         else this.died(`${kind} failed: ${e.message}`);
         settle({ url: null, lan: [] });
       });
@@ -293,7 +353,7 @@ export class Tunnel {
     this.healthTimer = null;
   }
 
-  /** Its program runs but the tunnel is dead: stop it (a new one gets a new URL). */
+  /** Its program runs but the tunnel is dead: stop it (a quick one comes back with a new URL). */
   private recycle(why: string): void {
     this.log(`${why}; opening a new one`);
     this.stopHealth();

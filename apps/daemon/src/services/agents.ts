@@ -10,11 +10,20 @@ import { execFile } from "node:child_process";
 import { readFileSync, statSync } from "node:fs";
 import { readdir, stat } from "node:fs/promises";
 import { basename, join } from "node:path";
-import type { AgentSession, AgentTranscript, Done, Project } from "@ekatva/protocol";
+import type {
+  AgentPage,
+  AgentSession,
+  AgentTranscript,
+  AgentUpdate,
+  Done,
+  Project,
+} from "@ekatva/protocol";
 import { TRPCError } from "@trpc/server";
 import { expand, home, tilde } from "../paths.js";
 import { backgroundAgents, readScreen, readyForInput } from "./agentScreen.js";
 import { transcript } from "./agentTranscript.js";
+import { ClaudeHistory } from "./claudeHistory.js";
+import { type ClaudeSession, ClaudeSessions, within } from "./claudeSessions.js";
 
 const AGENTS = { claude: "claude", codex: "codex", aider: "aider", gemini: "gemini" } as const;
 type Kind = AgentSession["agent"];
@@ -47,6 +56,8 @@ const FORMAT = [
   "#{pane_current_command}",
   "#{pane_current_path}",
   "#{@claude_wait}",
+  "#{pane_title}",
+  "#{pane_pid}",
 ].join("\t");
 
 export class AgentsService {
@@ -61,7 +72,15 @@ export class AgentsService {
     private readonly now: () => number = Date.now,
     /** How often `deliver` looks at a starting agent's screen. */
     private readonly stepMs = 500,
-  ) {}
+    /** Claude Code's folder. */
+    claudeDir = join(home(), ".claude"),
+  ) {
+    this.claude = new ClaudeSessions(claudeDir);
+  }
+
+  private readonly claude: ClaudeSessions;
+  /** Histories read so far, the latest used last (a few are kept). */
+  private histories = new Map<string, ClaudeHistory>();
 
   async list(): Promise<AgentSession[]> {
     let out: string;
@@ -71,8 +90,9 @@ export class AgentsService {
       return []; // no tmux server: no sessions
     }
     const sessions: AgentSession[] = [];
+    const own = await this.own(out);
     for (const line of out.split("\n")) {
-      const [id, session, window, command, path, wait] = line.split("\t");
+      const [id, session, window, command, path, wait, title] = line.split("\t");
       if (!id || !command) continue;
       const agent = (Object.keys(AGENTS) as (keyof typeof AGENTS)[]).find((k) =>
         command.toLowerCase().includes(AGENTS[k]),
@@ -81,12 +101,29 @@ export class AgentsService {
       const capture = await this.capture(id, 60);
       const screen = readScreen(capture);
       // The Stop hook marked it waiting: it finished its turn, your move.
-      const state = screen.state === "idle" && wait ? "done" : screen.state;
+      const mine = agent === "claude" ? own.get(id) : undefined;
+      const background = backgroundAgents(capture);
+      // Claude says itself whether it's busy; its screen says what it asks.
+      const seen =
+        mine?.status === "busy" && screen.state === "idle"
+          ? "working"
+          : mine?.status === "idle" && screen.state === "working" && !background.length
+            ? "idle"
+            : screen.state;
+      const state = seen === "idle" && wait ? "done" : seen;
+      // The list never waits for a history to be read: what's known of it so far.
+      const file = mine ? await this.claude.transcript(mine) : null;
+      const history = file ? (this.histories.get(file) ?? null) : null;
+      if (history) await history.refresh().catch(() => undefined);
+      else if (mine?.status === "busy") void this.historyOf(mine).catch(() => undefined);
       const prev = this.since.get(id);
       if (!prev || prev.state !== state) this.since.set(id, { state, at: this.now() });
       sessions.push({
         id,
         session: session ?? "",
+        name: nameOf(mine, history, title) ?? session ?? "",
+        rich: !!file,
+        queued: mine && state === "working" ? (history?.queued(mine.startedAt).length ?? 0) : 0,
         window: window ?? "",
         agent: agent as Kind,
         project: tilde(path ?? ""),
@@ -100,7 +137,7 @@ export class AgentsService {
           : null,
         activity: screen.activity,
         since: this.since.get(id)?.at ?? this.now(),
-        background: backgroundAgents(capture),
+        background,
       });
     }
     return sessions;
@@ -175,6 +212,143 @@ export class AgentsService {
     return transcript(await this.capture(id, lines));
   }
 
+  // ---------------------------------------------------- its whole history
+  /** Claude's sessions by pane, on this tmux server. */
+  private async own(listed?: string): Promise<Map<string, ClaudeSession>> {
+    const out = listed ?? (await this.run(["list-panes", "-a", "-F", FORMAT]).catch(() => ""));
+    const pids = new Map(
+      out.split("\n").map((l) => {
+        const f = l.split("\t");
+        return [f[0] ?? "", Number(f.at(-1))];
+      }),
+    );
+    return this.claude.byPane((pane, pid) => {
+      const shell = pids.get(pane);
+      return !!shell && within(pid, shell);
+    });
+  }
+
+  private async historyOf(s: ClaudeSession): Promise<ClaudeHistory | null> {
+    const file = await this.claude.transcript(s);
+    if (!file) return null;
+    const h = this.histories.get(file) ?? new ClaudeHistory(file);
+    this.histories.delete(file);
+    this.histories.set(file, h);
+    for (const old of this.histories.keys()) {
+      if (this.histories.size <= 12) break;
+      this.histories.delete(old);
+    }
+    await h.refresh().catch(() => undefined);
+    return h;
+  }
+
+  private async richOf(id: string): Promise<{ claude: ClaudeSession; history: ClaudeHistory }> {
+    if (!/^%\d+$/.test(id)) throw new TRPCError({ code: "BAD_REQUEST", message: "not a pane" });
+    const claude = (await this.own()).get(id);
+    const history = claude ? await this.historyOf(claude) : null;
+    if (!claude || !history)
+      throw new TRPCError({
+        code: "NOT_FOUND",
+        message: "that session has no history to read yet",
+      });
+    return { claude, history };
+  }
+
+  async history(id: string, before: number | null, limit: number): Promise<AgentPage> {
+    const { claude, history: h } = await this.richOf(id);
+    const to = Math.min(before ?? h.total, h.total);
+    return { epoch: epochOf(claude, h), total: h.total, items: h.items(to - limit, to) };
+  }
+
+  async output(id: string, n: number, epoch: string): Promise<string> {
+    const { claude, history } = await this.richOf(id);
+    try {
+      if (epoch !== epochOf(claude, history))
+        throw new Error("that's not in the conversation any more");
+      return await history.full(n, history.epoch);
+    } catch (e) {
+      throw new TRPCError({ code: "NOT_FOUND", message: (e as Error).message });
+    }
+  }
+
+  /** The latest items, then each change, looked for every second. */
+  async *follow(id: string, signal: AbortSignal | undefined): AsyncGenerator<AgentUpdate> {
+    let was: { h: ClaudeHistory; epoch: number; version: number; from: number } | null = null;
+    let said = "";
+    while (!signal?.aborted) {
+      const { claude, history: h } = await this.richOf(id);
+      const screen = await this.capture(id, 60);
+      const status = claude.status === "idle" ? null : transcript(screen).status;
+      const queued = claude.status === "idle" ? [] : h.queued(claude.startedAt);
+      const reset: boolean = !was || was.h !== h || was.epoch !== h.epoch;
+      const from: number = reset || !was ? Math.max(0, h.total - 60) : was.from;
+      const items = reset || !was ? h.items(from, h.total) : h.since(was.version, from);
+      const rest = JSON.stringify([status, queued]);
+      if (reset || items.length || rest !== said)
+        yield { reset, epoch: epochOf(claude, h), total: h.total, items, queued, status };
+      was = { h, epoch: h.epoch, version: h.version, from };
+      said = rest;
+      await new Promise<void>((res) => {
+        const t = setTimeout(done, 1000);
+        function done() {
+          clearTimeout(t);
+          signal?.removeEventListener("abort", done);
+          res();
+        }
+        signal?.addEventListener("abort", done, { once: true });
+      });
+    }
+  }
+
+  /** Throws when typing now would land in something else: a question, or words left on the laptop. */
+  private async free(id: string): Promise<void> {
+    const screen = await this.run(["capture-pane", "-p", "-e", "-J", "-t", id, "-S", "-60"]).catch(
+      () => "",
+    );
+    if (readScreen(plain(screen)).question)
+      throw new TRPCError({
+        code: "CONFLICT",
+        message: "it's asking you something: answer that first",
+      });
+    if (draftOf(screen))
+      throw new TRPCError({
+        code: "CONFLICT",
+        message: "there are unsent words in its box on the laptop: send or clear them there first",
+      });
+  }
+
+  async rename(id: string, name: string): Promise<Done<null>> {
+    const { claude, history } = await this.richOf(id);
+    const was = nameOf(claude, history) ?? id;
+    await this.free(id);
+    // Claude's own command: it runs at once, also while it works.
+    await this.paste(id, `/rename ${name}`);
+    await new Promise((r) => setTimeout(r, this.stepMs));
+    await this.run(["send-keys", "-t", id, "Enter"]);
+    for (let i = 0; i < 12; i++) {
+      await new Promise((r) => setTimeout(r, this.stepMs));
+      if ((await this.own()).get(id)?.name === name) {
+        void this.refresh().catch(() => undefined);
+        return { value: null, summary: `Renamed ${was} to ${name}` };
+      }
+    }
+    throw new TRPCError({ code: "CONFLICT", message: "Claude didn't take the new name" });
+  }
+
+  async sendNow(id: string): Promise<Done<null>> {
+    const s = await this.find(id);
+    const { claude, history } = await this.richOf(id);
+    if (!history.queued(claude.startedAt).length)
+      throw new TRPCError({ code: "CONFLICT", message: "nothing is waiting: it took it already" });
+    await this.pressSendNow(id);
+    return { value: null, summary: `Had ${s.name} take what was queued now` };
+  }
+
+  /** Claude's "send now" (ctrl+x ctrl+s): what's queued interrupts what it's doing. */
+  private async pressSendNow(id: string): Promise<void> {
+    await this.run(["send-keys", "-t", id, "C-x", "C-s"]);
+  }
+
   async answer(id: string, option: string, questionHash: string): Promise<Done<null>> {
     const s = await this.find(id);
     if (!s.question || s.question.hash !== questionHash) {
@@ -197,23 +371,36 @@ export class AgentsService {
     void this.refresh().catch(() => undefined);
     return {
       value: null,
-      summary: `Answered "${chosen.label}" in ${s.session}: ${s.question.text}`,
+      summary: `Answered "${chosen.label}" in ${s.name}: ${s.question.text}`,
     };
   }
 
-  async reply(id: string, text: string): Promise<Done<null>> {
+  async reply(id: string, text: string, now = false): Promise<Done<null>> {
     const s = await this.find(id);
+    if (s.rich) await this.free(id);
     await this.paste(id, text);
     await this.run(["send-keys", "-t", id, "Enter"]);
+    if (now && s.rich && s.state === "working") {
+      const { claude, history } = await this.richOf(id);
+      // Once it's in the queue; taken already (it was between steps): nothing to press.
+      for (let i = 0; i < 8; i++) {
+        await new Promise((r) => setTimeout(r, this.stepMs / 2));
+        await history.refresh().catch(() => undefined);
+        if (history.queued(claude.startedAt).length) {
+          await this.pressSendNow(id);
+          break;
+        }
+      }
+    }
     await this.run(["set", "-p", "-t", id, "-u", "@claude_wait"]).catch(() => undefined);
     void this.refresh().catch(() => undefined);
-    return { value: null, summary: `Replied to ${s.session} (${text.length} characters)` };
+    return { value: null, summary: `Replied to ${s.name} (${text.length} characters)` };
   }
 
   async interrupt(id: string): Promise<Done<null>> {
     const s = await this.find(id);
     await this.run(["send-keys", "-t", id, "Escape"]);
-    return { value: null, summary: `Interrupted ${s.session}` };
+    return { value: null, summary: `Interrupted ${s.name}` };
   }
 
   /** A new tmux session in `project`, running the agent, with a first prompt. */
@@ -251,6 +438,9 @@ export class AgentsService {
     const s = (await this.list()).find((x) => x.id === pane) ?? {
       id: pane,
       session: name,
+      name,
+      rich: false,
+      queued: 0,
       window: "1",
       agent,
       project: tilde(dir),
@@ -338,4 +528,55 @@ export class AgentsService {
   shutdown(): void {
     if (this.poller) clearInterval(this.poller);
   }
+}
+
+const epochOf = (s: ClaudeSession, h: ClaudeHistory) => `${s.sessionId}:${h.epoch}`;
+
+/** Claude's name for the session: yours or the topic's; a name made from the folder only if there's no topic. */
+export function nameOf(
+  s: ClaudeSession | undefined,
+  h: ClaudeHistory | null,
+  /** The terminal's title: Claude puts the topic there ("✳ Fixing the login"). */
+  title = "",
+): string | null {
+  if (!s) return null;
+  if (s.name && s.nameSource !== "derived") return s.name;
+  const topic = title.replace(/^[^\p{L}\p{N}]+/u, "").trim();
+  return h?.aiTitle ?? (topic && topic !== "Claude Code" ? topic : s.name);
+}
+
+// biome-ignore lint/suspicious/noControlCharactersInRegex: the terminal's own colours
+const SGR = /\u001b\[([0-9;:]*)m/g;
+const plain = (s: string) => s.replace(SGR, "");
+
+/**
+ * Words typed in Claude's input box and not sent, from a capture with
+ * colours: its own suggestion there is dim, which isn't a draft.
+ */
+export function draftOf(capture: string): string {
+  const lines = capture.replace(/\s+$/, "").split("\n");
+  for (let i = lines.length - 1; i > 0; i--) {
+    const l = lines[i] as string;
+    if (!/^\s*❯/.test(plain(l)) || !/^\s*[─━═]{10,}/.test(plain(lines[i - 1] ?? ""))) continue;
+    // Only what isn't dim, nor under the cursor (a suggestion's first letter is).
+    let dim = false;
+    let inverse = false;
+    let out = "";
+    let at = 0;
+    for (const m of l.matchAll(SGR)) {
+      if (!dim && !inverse) out += l.slice(at, m.index);
+      at = (m.index ?? 0) + m[0].length;
+      const codes = (m[1] || "0").split(/[;:]/);
+      if (codes[0] === "7") inverse = true;
+      else if (codes.includes("27") || codes[0] === "0") inverse = false;
+      if (codes.includes("2") && !codes.includes("38") && !codes.includes("48")) dim = true;
+      else if (codes.includes("0") || codes.includes("22")) dim = false;
+    }
+    if (!dim && !inverse) out += l.slice(at);
+    return out
+      .replace(/^\s*❯/, "")
+      .replace(/\u00a0/g, " ")
+      .trim();
+  }
+  return "";
 }

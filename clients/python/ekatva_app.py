@@ -14,19 +14,27 @@
     def handoff(data, sender, at):
         ...
 
-    app.start()                     # registers, and stays registered
-    app.call("queue")               # the phone's nāda (blocks: not on a UI thread)
+    @app.on("open")
+    def open_(inp, sender, files):  # a third argument: the files sent with the call
+        ...                         # (each {"name", "size", "mime", "path"})
 
-It registers over ekatva's local socket ($EKATVA_SOCKET, else
-$XDG_RUNTIME_DIR/ekatva.sock: yours alone) and stays registered: when the
-service restarts it connects and registers again by itself. A phone reaches
-the app only with its `app:<id>` grant.
+    app.start()                     # asks to link, and stays connected
+    app.call("queue")               # the phone's nāda (blocks: not on a UI thread)
+    app.call("addBook", {"title": "…"}, to="phone:vagdevi", files=["/tmp/a.epub"])
+
+The first time, it asks to link: you accept it in Darpaṇa (Apps), once, and
+it's linked for good (`on_status` and `.status` say where it stands:
+"waiting", "linked", "refused"). It stays connected over ekatva's local
+socket ($EKATVA_SOCKET, else $XDG_RUNTIME_DIR/ekatva.sock: yours alone):
+when the service restarts it connects again by itself. Calling an app other
+than its own other half asks you once in Darpaṇa (a route).
 
 One file, the standard library only: copy it into a tool, or put
 clients/python on its path. Handlers run on worker threads, never on the
 caller's: a GTK app hands results to its main loop itself (GLib.idle_add).
 """
 import base64
+import inspect
 import itertools
 import json
 import os
@@ -159,13 +167,16 @@ def _readable(err):
 class App:
     """One app, registered with ekatva while it runs."""
 
-    def __init__(self, manifest, path=None, on_ready=None, on_error=None, workers=4):
+    def __init__(self, manifest, path=None, on_ready=None, on_error=None, workers=4,
+                 on_status=None):
         if not isinstance(manifest, dict) or not manifest.get("id"):
             raise ValueError("a manifest needs at least an id, a name and a version")
         self.manifest = manifest
         self.path = path or socket_path()
         self.on_ready = on_ready
         self.on_error = on_error or (lambda e: None)
+        self.on_status = on_status
+        self.status = "connecting"   # then "waiting" (for you, in Darpaṇa), "linked" or "refused"
         self.handlers = {}
         self.events = {}
         self.ids = itertools.count(1)
@@ -274,6 +285,14 @@ class App:
 
     def _incoming(self, m):
         sender = m.get("from") or {}
+        if m.get("kind") == "status":
+            self.status = m.get("status") or "connecting"
+            if self.on_status:
+                try:
+                    self.on_status(self.status, m.get("why"))
+                except Exception as e:  # noqa: BLE001
+                    self.on_error(e)
+            return
         if m.get("kind") == "event":
             fn = self.events.get(m.get("name"))
             if fn:
@@ -288,7 +307,10 @@ class App:
         try:
             if fn is None:
                 raise EkatvaError(f'{self.manifest.get("name")} doesn\'t answer "{m.get("method")}" yet')
-            reply = {"id": m["id"], "ok": True, "result": fn(m.get("input"), sender)}
+            args = [m.get("input"), sender]
+            if _takes(fn, 3):
+                args.append(m.get("files") or [])
+            reply = {"id": m["id"], "ok": True, "result": fn(*args)}
         except Exception as e:  # noqa: BLE001 -- the phone gets the message, in words
             reply = {"id": m["id"], "ok": False, "error": (str(e) or type(e).__name__)[:500]}
         try:
@@ -317,18 +339,31 @@ class App:
         finally:
             self.waiting.pop(mid, None)
 
-    def call(self, method, inp=None, app=None, device=None, timeout=20):
-        """Call the phone's app (default: the one with this app's id). Blocks."""
+    def call(self, method, inp=None, app=None, device=None, timeout=20, to=None, files=None):
+        """Call an app: `to` "phone:APP" or "laptop:APP" (default: this app's half on
+        the phone); `files` are paths sent along. Blocks (a new route waits for you)."""
         return self._request("mutation", "apps.invoke", {
-            "app": app or self.manifest["id"], "method": method, "input": inp, "device": device,
-        }, timeout)
+            "to": to or f'phone:{app or self.manifest["id"]}', "method": method, "input": inp,
+            "files": list(files or []), "device": device, "as": self.manifest["id"],
+        }, max(timeout, 70) if to else timeout)
 
     def emit(self, name, data=None, keep=0, app=None, device=None):
         """An event for the phone's app; `keep` seconds holds it until that app is open."""
         self._request("mutation", "apps.emit", {
-            "app": app or self.manifest["id"], "name": name, "data": data, "keep": keep,
-            "device": device,
+            "to": f'phone:{app or self.manifest["id"]}', "name": name, "data": data, "keep": keep,
+            "device": device, "as": self.manifest["id"],
         })
 
     def phone_apps(self, device=None):
         return self._request("query", "apps.phone", {"device": device})
+
+
+def _takes(fn, n):
+    """Whether fn takes n positional arguments (handlers may skip `files`)."""
+    try:
+        params = inspect.signature(fn).parameters.values()
+    except (TypeError, ValueError):
+        return False
+    if any(p.kind == p.VAR_POSITIONAL for p in params):
+        return True
+    return sum(p.kind in (p.POSITIONAL_ONLY, p.POSITIONAL_OR_KEYWORD) for p in params) >= n

@@ -33,7 +33,7 @@ import {
   serveRouter,
 } from "@ekatva/protocol";
 import { createTRPCClient, createWSClient, type TRPCClient, wsLink } from "@trpc/client";
-import { type LaptopRecord, type Laptops, PHONE_DEFAULT } from "./laptops";
+import { type LaptopRecord, type Laptops, PHONE_DEFAULT, tunnelOf } from "./laptops";
 import type { Secrets } from "./vault";
 
 /** Opens a WebSocket to `url`, as a transport, or fails within `timeoutMs`. */
@@ -462,13 +462,18 @@ export class LinkManager {
     const lan = near ? [near, ...laptop.lan.filter((a) => a !== near)] : laptop.lan;
     // Heard here: straight to it. Not heard: the tunnel first (it works from
     // any network), the saved LAN addresses after it.
-    let result = await this.tryAll(laptop, lan, laptop.url, !near);
+    let result = await this.tryAll(laptop, lan, tunnelOf(laptop), !near);
     if (result === "ok" || result === "stop") return;
     // Not where it was: ask the pair's mailbox where it is now (not too often).
     const found = (await this.mayAsk(laptop.key)) ? await this.ask(laptop) : null;
     if (found) {
       await this.d.laptops.update(laptop.key, { lan: found.lan, url: found.url });
-      result = await this.tryAll(laptop, found.lan, found.url, !this.nearOf(laptop.key));
+      result = await this.tryAll(
+        laptop,
+        found.lan,
+        laptop.custom ? tunnelOf(laptop) : found.url,
+        !this.nearOf(laptop.key),
+      );
       if (result === "ok" || result === "stop") return;
     }
     this.scheduleRetry(laptop.key, result);

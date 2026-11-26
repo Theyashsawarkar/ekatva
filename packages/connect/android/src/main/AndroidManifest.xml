@@ -1,0 +1,6 @@
+<manifest xmlns:android="http://schemas.android.com/apk/res/android">
+  <!-- Android 11+ hides other apps unless asked for by name: this app may see ekatva. -->
+  <queries>
+    <package android:name="io.github.theyashsawarkar.ekatva" />
+  </queries>
+</manifest>

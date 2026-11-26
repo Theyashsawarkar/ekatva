@@ -6,10 +6,11 @@
 
 import { z } from "zod";
 import { type Appearance, AppearanceMode } from "./appearance.js";
+import { AppCall, AppEvent, type AppFrom, AppId, type AppInfo, type AppOutcome } from "./apps.js";
 import type { Capability } from "./capabilities.js";
-import { type Done, type FileService, filesRouter } from "./files.js";
+import { CHUNK, type Done, type FileService, filesRouter } from "./files.js";
 import { journalRouter, type Undoer } from "./journalRouter.js";
-import { type ShareService, shareRouter } from "./share.js";
+import { SHARE_MAX, type ShareService, shareRouter } from "./share.js";
 import { type Act, type BaseContext, createApi } from "./trpc.js";
 
 export const PhoneStatus = z.object({
@@ -98,6 +99,22 @@ export interface PhoneServices {
   };
   files: FileService;
   share: ShareService;
+  /**
+   * The phone's Vayu apps, for the laptop. An app is reachable only once you
+   * approved it on the phone (pinned to its signing certificate).
+   */
+  apps: {
+    list(): Promise<AppInfo[]>;
+    call(from: AppFrom, call: AppCall): Promise<AppOutcome<unknown>>;
+    emit(from: AppFrom, event: AppEvent): Promise<AppOutcome<null>>;
+    /** A file for a call, sent ahead of it; `finish` gives the ref the call names. */
+    upload: {
+      begin(app: string, name: string, size: number, from: string): Promise<{ id: string }>;
+      put(id: string, data: string): Promise<void>;
+      finish(id: string): Promise<{ ref: string }>;
+      cancel(id: string): Promise<void>;
+    };
+  };
   undo: Undoer;
 }
 
@@ -113,6 +130,15 @@ function done<T>(ctx: unknown, d: Done<T>): T {
   a.summary = d.summary;
   if (d.undo) a.undo = d.undo;
   return d.value;
+}
+
+const appFrom = (ctx: PhoneContext): AppFrom => ({ key: ctx.actor.key, name: ctx.actor.name });
+/** An app's call or event: its line for the log, or none (the manifest's `log: false`). */
+function logged<T>(ctx: unknown, o: AppOutcome<T>): T {
+  const a = (ctx as { act: Act }).act;
+  a.summary = o.summary;
+  if (!o.log) a.quiet = true;
+  return o.value;
 }
 
 const PhoneNumber = z.string().regex(/^[+\d][\d\s()*#-]{1,30}$/, "a phone number");
@@ -227,6 +253,53 @@ export const phoneRouter = api.router({
   share: shareRouter(api, "phone.share", (ctx) => ctx.services.share),
   files: filesRouter(api, "phone.files", null, (ctx) => ctx.services.files),
   journal: journalRouter(api, "phone.journal", (ctx) => ctx.services.undo, capOf),
+  apps: api.router({
+    list: p.meta({ cap: "phone.apps" }).query(({ ctx }) => ctx.services.apps.list()),
+    invoke: p
+      .meta({ cap: "phone.apps" })
+      .input(AppCall)
+      .mutation(async ({ ctx, input }) =>
+        logged(ctx, await ctx.services.apps.call(appFrom(ctx), input)),
+      ),
+    emit: p
+      .meta({ cap: "phone.apps" })
+      .input(AppEvent)
+      .mutation(async ({ ctx, input }) =>
+        logged(ctx, await ctx.services.apps.emit(appFrom(ctx), input)),
+      ),
+    upload: api.router({
+      begin: p
+        .meta({ cap: "phone.apps", record: false })
+        .input(
+          z.object({
+            app: AppId,
+            name: z.string().min(1).max(200),
+            size: z.number().int().min(0).max(SHARE_MAX),
+          }),
+        )
+        .mutation(({ ctx, input }) =>
+          ctx.services.apps.upload.begin(input.app, input.name, input.size, ctx.actor.name),
+        ),
+      put: p
+        .meta({ cap: "phone.apps", record: false })
+        .input(z.object({ id: z.string().max(64), data: z.string().max(CHUNK * 2) }))
+        .mutation(async ({ ctx, input }) => {
+          await ctx.services.apps.upload.put(input.id, input.data);
+          return null;
+        }),
+      finish: p
+        .meta({ cap: "phone.apps", record: false })
+        .input(z.object({ id: z.string().max(64) }))
+        .mutation(({ ctx, input }) => ctx.services.apps.upload.finish(input.id)),
+      cancel: p
+        .meta({ cap: "phone.apps", record: false })
+        .input(z.object({ id: z.string().max(64) }))
+        .mutation(async ({ ctx, input }) => {
+          await ctx.services.apps.upload.cancel(input.id);
+          return null;
+        }),
+    }),
+  }),
 });
 
 export type PhoneRouter = typeof phoneRouter;

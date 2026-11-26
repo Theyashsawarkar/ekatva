@@ -11,18 +11,20 @@ import {
   AppCall,
   AppEvent,
   type AppFrom,
+  AppId,
   type AppIncoming,
   type AppInfo,
   AppManifest,
   type AppOutcome,
   AppReply,
+  type AppsState,
   appGrant,
   type LaptopApp,
 } from "./apps.js";
 import { CAPABILITIES, type Capability, PRESETS } from "./capabilities.js";
-import { type Done, type FileService, filesRouter } from "./files.js";
+import { CHUNK, type Done, type FileService, filesRouter } from "./files.js";
 import { journalRouter, type Undoer } from "./journalRouter.js";
-import { type ShareService, shareRouter } from "./share.js";
+import { SHARE_MAX, type ShareService, shareRouter } from "./share.js";
 import { type Act, type BaseContext, createApi } from "./trpc.js";
 
 // ------------------------------------------------------------------ shapes
@@ -56,6 +58,12 @@ export const AgentSession = z.object({
   id: z.string(),
   /** The tmux session: "Aura_Arena". */
   session: z.string(),
+  /** How to call it: the agent's own name for the session, else the tmux session's. */
+  name: z.string(),
+  /** Its whole history can be read, and it can be renamed and told to send now (Claude Code). */
+  rich: z.boolean().default(false),
+  /** Your messages waiting for it to finish. */
+  queued: z.number().default(0),
   window: z.string(),
   agent: z.enum(["claude", "codex", "aider", "gemini", "other"]),
   project: z.string(),
@@ -84,6 +92,54 @@ export const AgentTranscript = z.object({
   status: z.string().nullable(),
 });
 export type AgentTranscript = z.infer<typeof AgentTranscript>;
+
+/** One thing in a session's history (see the daemon's claudeHistory.ts). */
+export const AgentItem = z.discriminatedUnion("kind", [
+  z.object({
+    kind: z.literal("you"),
+    n: z.number(),
+    at: z.number(),
+    text: z.string(),
+    images: z.number(),
+  }),
+  z.object({ kind: z.literal("says"), n: z.number(), at: z.number(), text: z.string() }),
+  z.object({
+    kind: z.literal("tool"),
+    n: z.number(),
+    at: z.number(),
+    name: z.string(),
+    title: z.string(),
+    /** What it ran or changed ("- old", "+ new" for an edit). */
+    detail: z.string(),
+    state: z.enum(["running", "ok", "error"]),
+    output: z.string(),
+    /** The output is longer: agents.output has all of it. */
+    cut: z.boolean(),
+  }),
+  z.object({
+    kind: z.literal("note"),
+    n: z.number(),
+    at: z.number(),
+    text: z.string(),
+    tone: z.enum(["plain", "error"]),
+  }),
+]);
+export type AgentItem = z.infer<typeof AgentItem>;
+/** Part of a history: items `first`… of `total`, numbered within `epoch`. */
+export interface AgentPage {
+  /** Item numbers hold while this stays the same (a rewind or another session changes it). */
+  epoch: string;
+  total: number;
+  items: AgentItem[];
+}
+/** A history followed live: the latest items first, then what's added or changed. */
+export interface AgentUpdate extends AgentPage {
+  /** Start over with these items (the first update, a rewind, a new session in the pane). */
+  reset: boolean;
+  queued: string[];
+  /** What it's doing right now, when it's working. */
+  status: string | null;
+}
 
 export const Project = z.object({
   path: z.string(),
@@ -365,7 +421,15 @@ export interface LaptopServices {
     tail(id: string, lines: number): Promise<string>;
     transcript(id: string, lines: number): Promise<AgentTranscript>;
     answer(id: string, option: string, questionHash: string): Promise<Done<null>>;
-    reply(id: string, text: string): Promise<Done<null>>;
+    /** A page of the whole history: `limit` items before item `before` (null: the latest). */
+    history(id: string, before: number | null, limit: number): Promise<AgentPage>;
+    follow(id: string, signal: AbortSignal | undefined): AsyncIterable<AgentUpdate>;
+    /** A tool's whole output. */
+    output(id: string, n: number, epoch: string): Promise<string>;
+    rename(id: string, name: string): Promise<Done<null>>;
+    /** What's queued goes to it at once, without waiting for it to finish. */
+    sendNow(id: string): Promise<Done<null>>;
+    reply(id: string, text: string, now: boolean): Promise<Done<null>>;
     interrupt(id: string): Promise<Done<null>>;
     start(
       project: string,
@@ -440,8 +504,16 @@ export interface LaptopServices {
   apps: {
     /** `granted`: whether the asking device holds an app's grant. */
     list(granted: (id: string) => boolean): Promise<AppInfo[]>;
+    /** `call.files[].path` are upload refs (from `upload`), turned into the app's copies here. */
     call(from: AppFrom, call: AppCall): Promise<AppOutcome<unknown>>;
     emit(from: AppFrom, event: AppEvent): Promise<AppOutcome<null>>;
+    /** A file for a call, sent ahead of it into the app's inbox; `finish` gives its ref. */
+    upload: {
+      begin(app: string, name: string, size: number, from: string): Promise<{ id: string }>;
+      put(id: string, data: string): Promise<void>;
+      finish(id: string): Promise<{ ref: string }>;
+      cancel(id: string): Promise<void>;
+    };
   };
   undo: Undoer;
 }
@@ -470,7 +542,7 @@ export type PendingPair = z.infer<typeof PendingPair>;
 
 /** The laptop's tunnel, as the phone and the window see it. */
 export const TunnelInfo = z.object({
-  kind: z.enum(["cloudflared", "ngrok", "tailscale", "none"]),
+  kind: z.enum(["named", "cloudflared", "ngrok", "tailscale", "none"]),
   /** off · starting (or waiting to try again) · up · missing (not installed) */
   state: z.enum(["off", "starting", "up", "missing"]),
   url: z.string().nullable(),
@@ -478,6 +550,9 @@ export const TunnelInfo = z.object({
   always: z.boolean(),
   since: z.number().nullable(),
   problem: z.string().nullable(),
+  /** kind "named": its address, set in the window or config.toml, changeable while running. */
+  hostname: z.string().nullable().default(null),
+  name: z.string().nullable().default(null),
 });
 export type TunnelInfo = z.infer<typeof TunnelInfo>;
 
@@ -486,6 +561,33 @@ export type TunnelInfo = z.infer<typeof TunnelInfo>;
  * its addresses on the local network. A connected phone keeps it, so it
  * can come back through the tunnel after leaving the Wi-Fi, without a QR.
  */
+/** The tunnel's settings, changed while the service runs (they replace config.toml's). */
+export const TunnelSettings = z
+  .object({
+    kind: z.enum(["named", "cloudflared", "ngrok", "tailscale", "none"]),
+    /** kind "named": the address its DNS record gives, like ekatva-tunnel.example.dev. */
+    hostname: z
+      .string()
+      .trim()
+      .toLowerCase()
+      .regex(
+        /^(?=.{1,253}$)([a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?\.)+[a-z]{2,}$/,
+        "a hostname, like ekatva-tunnel.example.dev",
+      )
+      .nullable()
+      .default(null),
+    /** kind "named": the tunnel's name in your Cloudflare account. */
+    name: z
+      .string()
+      .regex(/^[\w.-]{1,64}$/)
+      .default("ekatva"),
+  })
+  .refine((t) => t.kind !== "named" || !!t.hostname, {
+    message: "a named tunnel needs its address",
+    path: ["hostname"],
+  });
+export type TunnelSettings = z.infer<typeof TunnelSettings>;
+
 export const Route = z.object({
   /** The tunnel's wss:// URL, when it is up. */
   url: z.string().nullable(),
@@ -520,6 +622,8 @@ export type CallNow = z.infer<typeof CallNow>;
 
 /** What only this laptop's own user does: from the desktop window or the CLI. */
 export interface LocalServices {
+  /** The tunnel's settings: applied at once (the phones hear the new address). */
+  tunnel: { set(t: TunnelSettings): Promise<Done<TunnelInfo>> };
   pair: {
     start(away: boolean): Promise<Offer>;
     pending(signal: AbortSignal | undefined): AsyncIterable<PendingPair[]>;
@@ -541,17 +645,41 @@ export interface LocalServices {
     list(host: string, after: number, limit: number): Promise<import("./journal.js").Entry[]>;
     check(): Promise<{ host: string; name: string; seq: number; problem: string | null }[]>;
   };
-  /** This laptop's Vayu apps: they register here, and reach the phone's apps. */
+  /** This laptop's Vayu apps: they link here once, and reach the phone's apps. */
   apps: {
-    /** Registers an app while the subscription lasts; yields what it receives. */
-    register(manifest: AppManifest, signal: AbortSignal | undefined): AsyncIterable<AppIncoming>;
+    /**
+     * An app asks to link (or, linked, attaches) while the subscription
+     * lasts: first a "status" (waiting, linked, refused), then what it
+     * receives. `program` is who asked, when it could be found.
+     */
+    register(
+      manifest: AppManifest,
+      signal: AbortSignal | undefined,
+      program: string | null,
+    ): AsyncIterable<AppIncoming>;
     /** An app's answer to a call it received. */
     reply(reply: AppReply): Promise<void>;
-    /** Laptop apps (online or seen), with the phones granted each. */
+    /** Laptop apps (linked), with the phones granted each. */
     list(): Promise<LaptopApp[]>;
-    /** Call a phone's app (`device` null: the phone connected last). */
-    call(device: string | null, from: string, call: AppCall): Promise<unknown>;
-    emit(device: string | null, from: string, event: AppEvent): Promise<null>;
+    /** The Apps page now, then again whenever anything on it changes. */
+    watch(signal: AbortSignal | undefined): AsyncIterable<LaptopAppsView>;
+    /** Accept an app asking to link: linked for good, and every phone may reach it. */
+    accept(id: string): Promise<Done<null>>;
+    /** Refuse it: it isn't asked about again until you clear that. */
+    refuse(id: string): Promise<Done<null>>;
+    /** Clear a refusal: it may ask again. */
+    unrefuse(id: string): Promise<Done<null>>;
+    /** Unlink an app: its link, its phones' grants and its routes go. */
+    unlink(id: string): Promise<Done<null>>;
+    /** Your answer to a new route (the call waiting on it goes on, or fails). */
+    decideRoute(id: string, answer: "always" | "once" | "refuse"): Promise<Done<null>>;
+    removeRoute(caller: string, to: string): Promise<Done<null>>;
+    /**
+     * A call from this laptop (you, an agent, or a laptop app) to an app on
+     * either side, with files (laptop paths) moved across first.
+     */
+    call(c: LocalAppCall): Promise<AppOutcome<unknown>>;
+    emit(e: LocalAppEmit): Promise<null>;
     /** A phone's apps, as it reports them. */
     phoneApps(device: string | null): Promise<AppInfo[]>;
   };
@@ -568,6 +696,39 @@ export interface LaptopContext extends BaseContext {
   services: LaptopServices;
   /** Present only on the local socket. */
   local?: LocalServices;
+  /** Local socket: the agent this connection says it acts for ("claude"), if any. */
+  agent?: string;
+  /** Local socket: the program at the other end ("python3 …/bridge.py"), when it can be found. */
+  peer?: () => Promise<string | null>;
+}
+
+/** A call from this laptop, addressed to an app on either side. */
+export const LocalAppCall = z.object({
+  /** "phone:vagdevi" or "laptop:nada". */
+  to: z.string(),
+  method: z.string(),
+  input: z.unknown().default(null),
+  /** Laptop paths, sent along (each at most 4 GB). */
+  files: z.array(z.string().min(1).max(4096)).max(16).default([]),
+  /** Which phone (null: the one connected last). */
+  device: z.string().nullable().default(null),
+  /** A laptop app calling as itself (its id); else the agent, else you. */
+  as: AppId.optional(),
+});
+export type LocalAppCall = z.infer<typeof LocalAppCall> & { caller: string };
+export const LocalAppEmit = z.object({
+  to: z.string(),
+  name: z.string(),
+  data: z.unknown().default(null),
+  keep: z.number().int().min(0).max(86_400).default(0),
+  device: z.string().nullable().default(null),
+  as: AppId.optional(),
+});
+export type LocalAppEmit = z.infer<typeof LocalAppEmit> & { caller: string };
+
+/** This laptop's Apps page: the apps, and what's waiting for you. */
+export interface LaptopAppsView extends AppsState {
+  apps: LaptopApp[];
 }
 
 // ------------------------------------------------------------------ router
@@ -625,10 +786,67 @@ const agents = api.router({
     ),
   reply: p
     .meta({ cap: "agents" })
-    .input(z.object({ id: z.string(), text: z.string().min(1).max(20_000) }))
+    .input(
+      z.object({
+        id: z.string(),
+        text: z.string().min(1).max(20_000),
+        /** Working: don't wait in its queue, take it now. */
+        now: z.boolean().default(false),
+      }),
+    )
     .mutation(async ({ ctx, input }) =>
-      done(ctx, await ctx.services.agents.reply(input.id, input.text)),
+      done(ctx, await ctx.services.agents.reply(input.id, input.text, input.now)),
     ),
+  history: p
+    .meta({
+      cap: "agents",
+      audit: true,
+      summary: (i) => `Read the history of ${(i as { id: string }).id}`,
+    })
+    .input(
+      z.object({
+        id: z.string(),
+        before: z.number().int().min(0).nullable().default(null),
+        limit: z.number().int().min(1).max(200).default(60),
+      }),
+    )
+    .query(({ ctx, input }) => ctx.services.agents.history(input.id, input.before, input.limit)),
+  follow: p
+    .meta({
+      cap: "agents",
+      audit: true,
+      summary: (i) => `Read the conversation in ${(i as { id: string }).id}`,
+    })
+    .input(z.object({ id: z.string() }))
+    .subscription(({ ctx, input, signal }) => stream(ctx.services.agents.follow(input.id, signal))),
+  output: p
+    .meta({
+      cap: "agents",
+      audit: true,
+      summary: (i) => `Read the output of a tool in ${(i as { id: string }).id}`,
+    })
+    .input(z.object({ id: z.string(), n: z.number().int().min(0), epoch: z.string().max(100) }))
+    .query(({ ctx, input }) => ctx.services.agents.output(input.id, input.n, input.epoch)),
+  rename: p
+    .meta({ cap: "agents" })
+    .input(
+      z.object({
+        id: z.string(),
+        name: z
+          .string()
+          .trim()
+          .min(1)
+          .max(60)
+          .regex(/^[^\p{C}]+$/u),
+      }),
+    )
+    .mutation(async ({ ctx, input }) =>
+      done(ctx, await ctx.services.agents.rename(input.id, input.name)),
+    ),
+  sendNow: p
+    .meta({ cap: "agents" })
+    .input(z.object({ id: z.string() }))
+    .mutation(async ({ ctx, input }) => done(ctx, await ctx.services.agents.sendNow(input.id))),
   interrupt: p
     .meta({ cap: "agents" })
     .input(z.object({ id: z.string() }))
@@ -965,6 +1183,40 @@ const apps = api.router({
       allowedApp(ctx, input.app);
       return logged(ctx, await ctx.services.apps.emit(from(ctx), input));
     }),
+  /** Files for a call, sent ahead of it (in CHUNK pieces, base64). */
+  upload: api.router({
+    begin: p
+      .meta({ cap: "apps", record: false })
+      .input(
+        z.object({
+          app: AppId,
+          name: z.string().min(1).max(200),
+          size: z.number().int().min(0).max(SHARE_MAX),
+        }),
+      )
+      .mutation(({ ctx, input }) => {
+        allowedApp(ctx, input.app);
+        return ctx.services.apps.upload.begin(input.app, input.name, input.size, ctx.actor.name);
+      }),
+    put: p
+      .meta({ cap: "apps", record: false })
+      .input(z.object({ id: z.string().max(64), data: z.string().max(CHUNK * 2) }))
+      .mutation(async ({ ctx, input }) => {
+        await ctx.services.apps.upload.put(input.id, input.data);
+        return null;
+      }),
+    finish: p
+      .meta({ cap: "apps", record: false })
+      .input(z.object({ id: z.string().max(64) }))
+      .mutation(({ ctx, input }) => ctx.services.apps.upload.finish(input.id)),
+    cancel: p
+      .meta({ cap: "apps", record: false })
+      .input(z.object({ id: z.string().max(64) }))
+      .mutation(async ({ ctx, input }) => {
+        await ctx.services.apps.upload.cancel(input.id);
+        return null;
+      }),
+  }),
 });
 
 const link = api.router({
@@ -1018,6 +1270,11 @@ const admin = api.router({
     watch: p
       .meta({ cap: "admin" })
       .subscription(({ ctx, signal }) => stream(ctx.services.link.changes(signal))),
+    /** The tunnel's kind and address, now (no restart). */
+    set: p
+      .meta({ cap: "admin" })
+      .input(TunnelSettings)
+      .mutation(async ({ ctx, input }) => done(ctx, await local(ctx).tunnel.set(input))),
   }),
   pair: api.router({
     start: p
@@ -1100,15 +1357,22 @@ const admin = api.router({
 });
 
 /**
- * This laptop's own Vayu apps, on the local socket: they register to be
- * reached from the phone, answer calls, and reach the phone's apps.
+ * This laptop's own Vayu apps, on the local socket: they ask to link (and,
+ * linked, attach), answer calls, and reach apps on either side. The Apps
+ * page (Darpaṇa) accepts links and routes here.
  */
+/** Who a local call comes from: the agent (it can't pass for an app), else the app it names, else you. */
+const localCaller = (ctx: LaptopContext, as?: string): string =>
+  ctx.agent ? `agent:${ctx.agent}` : (as ?? "you");
 const localApps = api.router({
-  /** Stay registered while subscribed: every call and event for this app arrives here. */
+  /** Ask to link, then stay attached while subscribed: a status first, then calls and events. */
   register: p
     .meta({ cap: "admin" })
     .input(AppManifest)
-    .subscription(({ ctx, input, signal }) => stream(local(ctx).apps.register(input, signal))),
+    .subscription(async function* ({ ctx, input, signal }) {
+      const program = (await ctx.peer?.().catch(() => null)) ?? null;
+      yield* local(ctx).apps.register(input, signal, program);
+    }),
   reply: p
     .meta({ cap: "admin", record: false })
     .input(AppReply)
@@ -1117,32 +1381,68 @@ const localApps = api.router({
       return null;
     }),
   list: p.meta({ cap: "admin" }).query(({ ctx }) => local(ctx).apps.list()),
+  watch: p
+    .meta({ cap: "admin" })
+    .subscription(({ ctx, signal }) => stream(local(ctx).apps.watch(signal))),
+  accept: p
+    .meta({ cap: "admin" })
+    .input(z.object({ id: AppId }))
+    .mutation(async ({ ctx, input }) => done(ctx, await local(ctx).apps.accept(input.id))),
+  refuse: p
+    .meta({ cap: "admin" })
+    .input(z.object({ id: AppId }))
+    .mutation(async ({ ctx, input }) => done(ctx, await local(ctx).apps.refuse(input.id))),
+  unrefuse: p
+    .meta({ cap: "admin" })
+    .input(z.object({ id: AppId }))
+    .mutation(async ({ ctx, input }) => done(ctx, await local(ctx).apps.unrefuse(input.id))),
+  /** Unlink (the old name, forget, still works). */
+  forget: p
+    .meta({ cap: "admin" })
+    .input(z.object({ id: AppId }))
+    .mutation(async ({ ctx, input }) => done(ctx, await local(ctx).apps.unlink(input.id))),
+  unlink: p
+    .meta({ cap: "admin" })
+    .input(z.object({ id: AppId }))
+    .mutation(async ({ ctx, input }) => done(ctx, await local(ctx).apps.unlink(input.id))),
+  route: p
+    .meta({ cap: "admin" })
+    .input(z.object({ id: z.string().max(64), answer: z.enum(["always", "once", "refuse"]) }))
+    .mutation(async ({ ctx, input }) =>
+      done(ctx, await local(ctx).apps.decideRoute(input.id, input.answer)),
+    ),
+  unroute: p
+    .meta({ cap: "admin" })
+    .input(z.object({ caller: z.string().max(80), to: z.string().max(80) }))
+    .mutation(async ({ ctx, input }) =>
+      done(ctx, await local(ctx).apps.removeRoute(input.caller, input.to)),
+    ),
   /** A phone's apps (`device` null: the phone connected last). */
   phone: p
     .meta({ cap: "admin" })
     .input(z.object({ device: z.string().nullable().default(null) }))
     .query(({ ctx, input }) => local(ctx).apps.phoneApps(input.device)),
+  /**
+   * Call an app on either side (`to`: "phone:vagdevi", "laptop:nada"; the old
+   * `app` means "phone:APP"), with files sent along.
+   */
   invoke: p
-    .meta({ cap: "admin", record: false })
-    .input(AppCall.extend({ device: z.string().nullable().default(null) }))
-    .mutation(({ ctx, input }) =>
-      local(ctx).apps.call(input.device, ctx.actor.name, {
-        app: input.app,
-        method: input.method,
-        input: input.input,
-      }),
-    ),
+    .meta({ cap: "admin" })
+    .input(LocalAppCall.partial({ to: true }).extend({ app: AppId.optional() }))
+    .mutation(async ({ ctx, input }) => {
+      const to = input.to ?? (input.app ? `phone:${input.app}` : null);
+      if (!to) throw new TRPCError({ code: "BAD_REQUEST", message: "say which app (to)" });
+      const caller = localCaller(ctx, input.as);
+      return logged(ctx, await local(ctx).apps.call({ ...input, to, caller }));
+    }),
   emit: p
     .meta({ cap: "admin", record: false })
-    .input(AppEvent.extend({ device: z.string().nullable().default(null) }))
-    .mutation(({ ctx, input }) =>
-      local(ctx).apps.emit(input.device, ctx.actor.name, {
-        app: input.app,
-        name: input.name,
-        data: input.data,
-        keep: input.keep,
-      }),
-    ),
+    .input(LocalAppEmit.partial({ to: true }).extend({ app: AppId.optional() }))
+    .mutation(({ ctx, input }) => {
+      const to = input.to ?? (input.app ? `phone:${input.app}` : null);
+      if (!to) throw new TRPCError({ code: "BAD_REQUEST", message: "say which app (to)" });
+      return local(ctx).apps.emit({ ...input, to, caller: localCaller(ctx, input.as) });
+    }),
 });
 
 /**

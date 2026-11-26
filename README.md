@@ -146,7 +146,7 @@ anything but ciphertext.
   phones reach it over the same encrypted link, each app only with its own
   `app:<id>` grant, every call logged: no pairing, tunnel or keys of its own
   ([Apps through ekatva](https://ekatva.theyashsawarkar.dev/features/apps/)).
-  The phone's half is being built.
+  On the phone, an app asks once and your answer is pinned to how it's signed.
 - **Built to grow.** Every feature is a *capability*: one module on each
   side behind one typed contract. Adding one doesn't touch the others; see
   [Adding a feature](#adding-a-feature).
@@ -268,11 +268,13 @@ packages/
   protocol/    the contract: tRPC routers' types and zod schemas, shared by all
   link/        Noise handshake, encrypted socket, pairing, QR payload
   app/         @ekatva/app: for a laptop app in TypeScript to talk through ekatva
+  connect/     @ekatva/connect: the same for a phone app (an Expo module, Android)
   config/      tsconfig
 clients/
   python/      ekatva_app.py: the same for a laptop app in Python (one file, stdlib only)
 examples/
   echo/        the smallest laptop app on ekatva
+  echo-phone/  the smallest phone app on ekatva
 ```
 
 The laptop's window is a [Vyom](https://github.com/Theyashsawarkar/vyom) popup in

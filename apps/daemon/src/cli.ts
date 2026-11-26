@@ -4,7 +4,7 @@
  */
 import { spawn } from "node:child_process";
 import { chmodSync, existsSync, rmSync } from "node:fs";
-import { join } from "node:path";
+import { join, resolve } from "node:path";
 import { createInterface } from "node:readline/promises";
 import {
   CAPABILITIES,
@@ -50,10 +50,16 @@ const HELP = `ekatva ${VERSION}: your phone and your laptop as one device
   ekatva call [hangup|--waybar]   the phone's call now (or hang it up; --waybar: a bar capsule)
   ekatva status [--json|--waybar]
   ekatva agents                   AI agent sessions in tmux
-  ekatva apps                     Vayu apps that talk through ekatva: the laptop's, the phone's
-  ekatva apps call APP METHOD [JSON] [--device D]
-                                  call the phone's app (as this laptop)
-  ekatva window [PLACE]           open the window: overview, messages, calls, files, log, devices, pair
+  ekatva apps                     Vayu apps linked through ekatva, and what's waiting for you
+  ekatva apps accept|refuse APP   answer an app asking to link (as Darpaṇa's Apps page does)
+  ekatva apps unlink APP          unlink an app (its phones' grants and routes go too)
+  ekatva apps call TO METHOD [JSON] [--file PATH]… [--device D]
+                                  call an app (TO: phone:APP or laptop:APP), as you
+  ekatva apps allow|deny          answer the oldest route waiting (allow: always)
+  ekatva tunnel                   how phones reach this laptop from anywhere
+  ekatva tunnel named HOST [NAME] your Cloudflare tunnel NAME (default ekatva) at HOST, now
+  ekatva tunnel quick|none        a free quick tunnel, or none (now)
+  ekatva window [PLACE]           open the window: overview, messages, calls, files, log, devices, pair, apps
   ekatva daemon                   run the service (systemd does this)
   ekatva mcp                      an MCP server on stdio, for AI agents (EKATVA_AGENT=name)
 
@@ -225,6 +231,7 @@ const PLACES: Record<string, string> = {
   messages: "msgs",
   calls: "calls",
   files: "files",
+  apps: "apps",
 };
 
 /**
@@ -557,7 +564,7 @@ async function main(argv: string[]): Promise<void> {
         if (!list.length) process.stdout.write("No agent sessions in tmux.\n");
         for (const a of list) {
           process.stdout.write(
-            `${a.id.padEnd(5)} ${a.session.padEnd(16)} ${a.state.padEnd(8)} ${a.project}\n`,
+            `${a.id.padEnd(5)} ${(a.name || a.session).slice(0, 40).padEnd(40)} ${a.state.padEnd(8)} ${a.project}\n`,
           );
           if (a.question)
             process.stdout.write(
@@ -566,48 +573,112 @@ async function main(argv: string[]): Promise<void> {
         }
         break;
       }
+      case "tunnel": {
+        const [how, host, name] = rest;
+        if (how) {
+          const kind = how === "quick" ? "cloudflared" : how;
+          if (!["named", "cloudflared", "ngrok", "tailscale", "none"].includes(kind))
+            fail("usage: ekatva tunnel [named HOST [NAME] | quick | none]");
+          const t = await api.admin.link.set.mutate({
+            kind: kind as "named",
+            hostname: host ?? null,
+            ...(name ? { name } : {}),
+          });
+          process.stdout.write(
+            `${t.url ? `reachable at ${t.url.replace("wss://", "")}` : `${t.kind}: ${t.state}${t.problem ? ` (${t.problem})` : ""}`}\n`,
+          );
+          break;
+        }
+        const r = await api.admin.link.route.query();
+        const t = r.tunnel;
+        process.stdout.write(
+          `${t.kind}${t.hostname ? ` ${t.hostname}` : ""}: ${t.state}${t.url ? `, ${t.url.replace("wss://", "")}` : ""}${t.problem ? ` (${t.problem})` : ""}\n`,
+        );
+        break;
+      }
       case "apps": {
-        if (rest[0] === "call") {
-          const [, app, method, json] = rest;
-          if (!app || !method) fail("usage: ekatva apps call APP METHOD [JSON] [--device D]");
+        const sub = rest[0];
+        if (sub === "call") {
+          const files: string[] = [];
+          for (let f = flag("--file"); f; f = flag("--file")) files.push(resolve(f));
+          const device = flag("--device") ?? null;
+          const [, target, method, json] = rest;
+          if (!target || !method)
+            fail("usage: ekatva apps call TO METHOD [JSON] [--file PATH]… [--device D]");
           let input: unknown = null;
-          if (json && !json.startsWith("--")) {
+          if (json) {
             try {
               input = JSON.parse(json);
             } catch {
               fail("the input isn't JSON (quote it: '{\"a\":1}')");
             }
           }
-          const out = await api.apps.invoke.mutate({
-            app,
-            method,
-            input,
-            device: flag("--device") ?? null,
-          });
+          const to = target.includes(":") ? target : `phone:${target}`;
+          const out = await api.apps.invoke.mutate({ to, method, input, files, device });
           process.stdout.write(`${JSON.stringify(out, null, 2)}\n`);
           break;
         }
-        const names = new Map((await api.admin.devices.list.query()).map((d) => [d.key, d.name]));
-        const laptop = await api.apps.list.query();
-        process.stdout.write("On this laptop\n");
-        if (!laptop.length) process.stdout.write("  none yet (an app appears once it registers)\n");
-        for (const a of laptop) {
-          const who = a.grantedTo.map((k) => names.get(k) ?? k.slice(0, 8)).join(", ");
+        if (sub === "accept" || sub === "refuse" || sub === "unlink" || sub === "forget") {
+          const id = rest[1] ?? fail(`usage: ekatva apps ${sub} APP`);
+          const m = sub === "forget" ? "unlink" : sub;
+          await api.apps[m].mutate({ id });
           process.stdout.write(
-            `  ${a.online ? "●" : "○"} ${a.name} (${a.id} ${a.version})  ${who ? `reachable from: ${who}` : `no phone may reach it (ekatva grant PHONE +apps +app:${a.id})`}\n`,
+            `${sub === "accept" ? "linked" : sub === "refuse" ? "refused" : "unlinked"} ${id}\n`,
+          );
+          break;
+        }
+        const view = await new Promise<import("@ekatva/protocol").LaptopAppsView>((ok, no) => {
+          const s = api.apps.watch.subscribe(undefined, {
+            onData: (v) => {
+              s.unsubscribe();
+              ok(v);
+            },
+            onError: no,
+          });
+        });
+        if (sub === "allow" || sub === "deny") {
+          const r = view.routeRequests[0] ?? fail("no route is waiting for you");
+          await api.apps.route.mutate({ id: r.id, answer: sub === "allow" ? "always" : "refuse" });
+          process.stdout.write(
+            `${r.callerName} ${sub === "allow" ? "may" : "may not"} use ${r.toName} (${r.to})\n`,
+          );
+          break;
+        }
+        const names = new Map((await api.admin.devices.list.query()).map((d) => [d.key, d.name]));
+        const out: string[] = [];
+        for (const r of view.requests)
+          out.push(
+            `waiting: ${r.name} (${r.id} ${r.version}) asks to link${r.program ? `, from ${r.program}` : ""}  (ekatva apps accept ${r.id})`,
+          );
+        for (const r of view.routeRequests)
+          out.push(
+            `waiting: ${r.callerName} wants to use ${r.toName} (${r.to}): ${r.why}  (ekatva apps allow|deny)`,
+          );
+        out.push("On this laptop");
+        if (!view.apps.length) out.push("  none linked yet (an app asks the first time it runs)");
+        for (const a of view.apps) {
+          const who = a.grantedTo.map((k) => names.get(k) ?? k.slice(0, 8)).join(", ");
+          out.push(
+            `  ${a.online ? "●" : "○"} ${a.name} (${a.id} ${a.version})  ${who ? `reachable from: ${who}` : "no phone may reach it"}`,
           );
         }
         try {
           const phone = await api.apps.phone.query({ device: flag("--device") ?? null });
-          process.stdout.write("On the phone\n");
-          if (!phone.length) process.stdout.write("  none yet\n");
+          out.push("On the phone");
+          if (!phone.length) out.push("  none linked yet");
           for (const a of phone)
-            process.stdout.write(
-              `  ${a.online ? "●" : "○"} ${a.name} (${a.id} ${a.version})${a.granted ? "" : "  (this laptop may not reach it)"}\n`,
+            out.push(
+              `  ${a.online ? "●" : "○"} ${a.name} (${a.id} ${a.version})${a.granted ? "" : "  (this laptop may not reach it)"}`,
             );
         } catch (e) {
-          process.stdout.write(`On the phone: ${(e as Error).message}\n`);
+          out.push(`On the phone: ${(e as Error).message}`);
         }
+        if (view.routes.length) {
+          out.push("Routes you allowed");
+          for (const r of view.routes) out.push(`  ${r.caller} → ${r.to}`);
+        }
+        if (view.refused.length) out.push(`Refused: ${view.refused.join(", ")}`);
+        process.stdout.write(`${out.join("\n")}\n`);
         break;
       }
       default:

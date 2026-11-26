@@ -5,6 +5,7 @@ import { useEffect } from "react";
 import { BackHandler, StyleSheet, View } from "react-native";
 import { GestureHandlerRootView } from "react-native-gesture-handler";
 import { SafeAreaProvider } from "react-native-safe-area-context";
+import { AppRequests } from "../ui/app-requests";
 import { ErrorBoundary } from "../ui/error-boundary";
 import { Toaster } from "../ui/lac";
 import { RingBanner } from "../ui/ring-banner";
@@ -38,6 +39,7 @@ export default function Root() {
           <AppProvider>
             <StatusBar style="light" />
             <Routes />
+            <AppRequests />
             <RingBanner />
             <Toaster />
           </AppProvider>
@@ -87,6 +89,7 @@ function Routes() {
           <Stack.Screen name="root-history" options={sheet} />
           <Stack.Screen name="notifications" options={{ animation: "slide_from_right" }} />
           <Stack.Screen name="permissions" options={{ animation: "slide_from_right" }} />
+          <Stack.Screen name="apps" options={{ animation: "slide_from_right" }} />
           <Stack.Screen name="terminal" options={{ animation: "slide_from_right" }} />
           <Stack.Screen name="clipboard" options={sheet} />
           <Stack.Screen name="send" options={sheet} />

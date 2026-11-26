@@ -1,0 +1,16 @@
+group = "io.github.theyashsawarkar.ekatva.connect"
+version = "0.1.0"
+
+apply plugin: "com.android.library"
+apply plugin: "org.jetbrains.kotlin.android"
+
+android {
+    namespace = "io.github.theyashsawarkar.ekatva.connect"
+    compileSdk = 35
+    defaultConfig { minSdk = 24 }
+    compileOptions {
+        sourceCompatibility = JavaVersion.VERSION_11
+        targetCompatibility = JavaVersion.VERSION_11
+    }
+    kotlinOptions { jvmTarget = "11" }
+}
