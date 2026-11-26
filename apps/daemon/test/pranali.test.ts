@@ -439,23 +439,33 @@ describe.skipIf(!havePranali)("through the real pranali", () => {
       const exited = new Promise<number | null>((r) => p.on("exit", (c) => r(c)));
       return { p, out, send, exited };
     };
-    const runs = ["xi", "omicron"].map((agent) => {
-      const x = pipe(agent);
-      x.send({
-        id: 1,
-        method: "initialize",
-        params: { protocolVersion: "2025-06-18", capabilities: {}, clientInfo: { name: "t" } },
-      });
-      x.send({ method: "notifications/initialized" });
-      x.send({
-        id: 2,
-        method: "tools/call",
-        params: { name: "jyoti_set", arguments: { level: "off" } },
-      });
-      x.send({ id: 3, method: "tools/call", params: { name: "log_recent", arguments: {} } });
-      x.p.stdin!.end();
-      return x;
-    });
+    // Concurrent requests may be answered in any order (JSON-RPC), and
+    // log_recent must see jyoti_set's entry: so wait for answer 2, then send
+    // 3 and end stdin at once (3 is still answered after stdin ends).
+    const until = async (x: { out: Rpc[] }, id: number) => {
+      for (let i = 0; i < 500 && !x.out.some((m) => m.id === id); i++)
+        await new Promise((r) => setTimeout(r, 10));
+    };
+    const runs = await Promise.all(
+      ["xi", "omicron"].map(async (agent) => {
+        const x = pipe(agent);
+        x.send({
+          id: 1,
+          method: "initialize",
+          params: { protocolVersion: "2025-06-18", capabilities: {}, clientInfo: { name: "t" } },
+        });
+        x.send({ method: "notifications/initialized" });
+        x.send({
+          id: 2,
+          method: "tools/call",
+          params: { name: "jyoti_set", arguments: { level: "off" } },
+        });
+        await until(x, 2);
+        x.send({ id: 3, method: "tools/call", params: { name: "log_recent", arguments: {} } });
+        x.p.stdin!.end();
+        return x;
+      }),
+    );
     for (const x of runs) expect(await x.exited).toBe(0);
     for (const [i, x] of runs.entries()) {
       expect(x.out.map((m) => m.id)).toEqual([1, 2, 3]);
