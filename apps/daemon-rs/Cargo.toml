@@ -1,0 +1,30 @@
+# ekatva's small native processes: what runs long, or once per agent
+# session, without a Node runtime each (apps/daemon stays TypeScript).
+[workspace]
+members = ["."]
+resolver = "3"
+
+[package]
+name = "ekatva-rs"
+version = "0.1.1"
+edition = "2024"
+license = "MIT"
+description = "ekatva's per-session and long-running clients: the MCP pipe and the waybar watcher"
+publish = false
+
+[[bin]]
+name = "ekatva-rs"
+path = "src/main.rs"
+
+[dependencies]
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+tungstenite = { version = "0.30", default-features = false, features = ["handshake"] }
+
+[profile.release]
+# Measured: "z" 551 KB, 2.4-2.6 MB RSS; 3 645 KB, 2.5-2.7 MB. Nothing here is hot.
+opt-level = "z"
+lto = true
+codegen-units = 1
+strip = true
+panic = "abort"

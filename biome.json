@@ -8,6 +8,7 @@
       "!**/.turbo",
       "!**/.astro",
       "!**/node_modules",
+      "!apps/daemon-rs/target",
       "!apps/mobile/android",
       "!examples/*/android",
       "!**/android/build",

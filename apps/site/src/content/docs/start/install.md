@@ -12,6 +12,9 @@ app from this same code, signed with their own key, in one command.
 ## The laptop
 
 You need Linux with systemd, Node 22 or newer, pnpm, and tmux for agents.
+Rust (cargo) is optional: it builds `ekatva-rs`, which runs each agent's MCP
+session and the waybar capsule without a Node process each; without it the
+`ekatva` launcher runs the TypeScript CLI for those too.
 `wl-clipboard` gives clipboard sync, `libsecret` (`secret-tool`) keeps the
 identity key in your desktop keyring.
 
@@ -20,7 +23,8 @@ git clone https://github.com/Theyashsawarkar/ekatva
 cd ekatva
 pnpm install
 pnpm build
-ln -s "$PWD/apps/daemon/bin/ekatva.js" ~/.local/bin/ekatva
+cargo build --release --manifest-path apps/daemon-rs/Cargo.toml   # optional: needs Rust
+ln -sf "$PWD/apps/daemon/bin/ekatva" ~/.local/bin/ekatva
 cp apps/daemon/systemd/ekatva.service ~/.config/systemd/user/
 systemctl --user enable --now ekatva
 ekatva status

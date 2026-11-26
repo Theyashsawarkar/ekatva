@@ -8,8 +8,12 @@ Starlight, GitHub Pages); `packages/protocol` (the tRPC contract, zod), `package
 The laptop's window is a Vyom popup in its own repo
 (~/personal/darpana, Darpaṇa, Python GTK), a client of the daemon's socket.
 
-- JS/TS only; the only exception is small Expo native modules in
-  `apps/mobile/modules/` for Android APIs JS can't reach.
+- TypeScript everywhere, with two exceptions: small Expo native modules in
+  `apps/mobile/modules/` for Android APIs JS can't reach, and small Rust
+  binaries in `apps/daemon-rs` for processes that run long or once per
+  session (the MCP pipe, the waybar watcher), so each isn't a Node runtime.
+  The daemon itself stays TypeScript. Rust there: sync std + tungstenite,
+  no tokio; `cargo test` and `cargo clippy --all-targets -- -D warnings` pass.
 - Every feature is a capability: a router in `packages/protocol`, a
   handler on the side that does it, off until granted. Check grants on the
   laptop for every call.

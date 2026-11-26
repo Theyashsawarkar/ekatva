@@ -1,0 +1,18 @@
+#!/bin/sh
+# The installed `ekatva` (~/.local/bin/ekatva links here). What runs long or
+# once per agent session (`mcp`, `call --waybar`) goes to the small Rust
+# binary when it's built (apps/daemon-rs); everything else, and everything
+# when it isn't, to the TypeScript CLI.
+here=$(dirname "$(readlink -f "$0")")
+rs="$here/../../daemon-rs/target/release/ekatva-rs"
+if [ -x "$rs" ]; then
+  case "$1" in
+    mcp) EKATVA_TS_CLI="$here/ekatva.js" exec "$rs" "$@" ;;
+    call)
+      for a in "$@"; do
+        [ "$a" = --waybar ] && EKATVA_TS_CLI="$here/ekatva.js" exec "$rs" "$@"
+      done
+      ;;
+  esac
+fi
+exec "$here/ekatva.js" "$@"

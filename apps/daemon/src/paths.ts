@@ -18,6 +18,8 @@ export const dirs = {
 };
 
 export const socketPath = () => join(dirs.runtime(), "ekatva.sock");
+/** AI agents' sessions (`ekatva-rs mcp`): in a 0700 directory of its own. */
+export const mcpSocketPath = () => join(dirs.runtime(), "ekatva", "mcp.sock");
 
 /** "~/x" → "/home/you/x"; relative paths are taken from home. */
 export function expand(p: string): string {

@@ -20,7 +20,7 @@ import WebSocket from "ws";
 import { loadConfig } from "./config.js";
 import { Daemon, VERSION } from "./daemon.js";
 import { loadIdentity } from "./identity.js";
-import { dirs, socketPath } from "./paths.js";
+import { dirs, mcpSocketPath, socketPath } from "./paths.js";
 import { callFor } from "./services/calls.js";
 import { run } from "./services/system.js";
 
@@ -350,6 +350,7 @@ async function main(argv: string[]): Promise<void> {
       configDir: dirs.config(),
       undoDir: dirs.undo(),
       socketPath: socketPath(),
+      mcpSocketPath: mcpSocketPath(),
       notify,
       keepTunnel: config.tunnel.mode === "always",
     });

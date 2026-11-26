@@ -1,16 +1,23 @@
 /**
- * `ekatva mcp`: the phone and laptop for AI agents, as an MCP server on
- * stdio. It talks to the daemon over the same local socket as the CLI, so
- * an agent can do nothing the CLI can't; every call lands in the action log
- * as "<user> via <agent>". Reaching another person (an SMS, a call) waits
- * for the user to allow it in a dialog. What other people wrote (messages,
- * the clipboard, files) comes back inside <untrusted> blocks.
+ * The phone and laptop for AI agents, as an MCP server. The tools call the
+ * daemon's local router as the CLI does, so an agent can do nothing the CLI
+ * can't; every call lands in the action log as "<user> via <agent>".
+ * Reaching another person (an SMS, a call) waits for the user to allow it
+ * in a dialog. What other people wrote (messages, the clipboard, files)
+ * comes back inside <untrusted> blocks.
+ *
+ * Two ways in, one tool set (`mcpServer`): the daemon serves it on its MCP
+ * socket (a stream per session: a `{"agent":…}` line, then newline-framed
+ * JSON-RPC; `ekatva-rs mcp` pipes stdio there), and `ekatva mcp` serves it
+ * on stdio over the CLI's socket, the fallback when the Rust pipe isn't
+ * built or the daemon has no MCP socket.
  */
 import { spawn } from "node:child_process";
+import type { Readable, Writable } from "node:stream";
 import type { LocalRouter } from "@ekatva/protocol";
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
-import { createTRPCClient, createWSClient, wsLink } from "@trpc/client";
+import { createTRPCClient, createWSClient, type TRPCClient, wsLink } from "@trpc/client";
 import WebSocket from "ws";
 import { z } from "zod";
 import { VERSION } from "./daemon.js";
@@ -23,7 +30,10 @@ const INSTRUCTIONS = `ekatva links this laptop with the user's Android phone (en
 - Every call is written to ekatva's action log under your name; most can be undone with \`ekatva undo N\`.
 - If no phone is connected, phone tools fail: say so rather than retrying.`;
 
-type Api = ReturnType<typeof createTRPCClient<LocalRouter>>;
+/** The local router, through the socket (`ekatva mcp`) or called in the daemon itself. */
+export type Api = TRPCClient<LocalRouter>;
+/** Asks the user to allow a call that reaches another person. */
+export type Approve = (title: string, body: string) => Promise<boolean>;
 
 const untrusted = (label: string, body: unknown) =>
   `<untrusted source="${label}">\n${typeof body === "string" ? body : JSON.stringify(body, null, 2)}\n</untrusted>`;
@@ -36,7 +46,7 @@ const failed = (e: unknown) => ({
 });
 
 /** Asks the user on the laptop; anything but "Allow" (no dialog, closed, timed out) is no. */
-function approve(title: string, body: string): Promise<boolean> {
+export const approve: Approve = (title, body) => {
   return new Promise((resolve) => {
     const d = spawn(
       "zenity",
@@ -55,7 +65,7 @@ function approve(title: string, body: string): Promise<boolean> {
     d.on("exit", (code) => resolve(code === 0));
     d.on("error", () => resolve(false));
   });
-}
+};
 
 function connect(agent: string): Api {
   const ws = createWSClient({
@@ -68,8 +78,30 @@ function connect(agent: string): Api {
   return createTRPCClient<LocalRouter>({ links: [wsLink({ client: ws })] });
 }
 
+/** `ekatva mcp`: on stdio, over the CLI's socket. */
 export async function serveMcp(agent = process.env.EKATVA_AGENT || "agent"): Promise<void> {
-  const api = connect(agent);
+  await mcpServer(connect(agent), agent).connect(new StdioServerTransport());
+}
+
+/**
+ * One MCP session on a stream (the daemon's MCP socket): newline-framed
+ * JSON-RPC both ways, as on stdio. Resolves once it's connected; the
+ * session ends when the stream does.
+ */
+export async function serveMcpStream(
+  input: Readable,
+  output: Writable,
+  api: Api,
+  agent: string,
+  ask: Approve = approve,
+): Promise<McpServer> {
+  const server = mcpServer(api, agent, ask);
+  await server.connect(new StdioServerTransport(input, output));
+  return server;
+}
+
+/** The ekatva tool set, for one session of `agent`, calling `api`. */
+export function mcpServer(api: Api, agent: string, ask: Approve = approve): McpServer {
   const server = new McpServer(
     { name: "ekatva", version: VERSION },
     { instructions: INSTRUCTIONS },
@@ -133,10 +165,7 @@ export async function serveMcp(agent = process.env.EKATVA_AGENT || "agent"): Pro
     { to: z.string().describe("phone number"), text: z.string().min(1).max(5000) },
     async ({ to, text: body }) => {
       if (
-        !(await approve(
-          "ekatva: send an SMS?",
-          `${agent} wants to send an SMS to ${to}:\n\n${body}`,
-        ))
+        !(await ask("ekatva: send an SMS?", `${agent} wants to send an SMS to ${to}:\n\n${body}`))
       )
         return text("Declined: the user didn't allow this SMS. Nothing was sent.");
       await act("sms.send", { to, text: body });
@@ -149,10 +178,7 @@ export async function serveMcp(agent = process.env.EKATVA_AGENT || "agent"): Pro
     { number: z.string() },
     async ({ number }) => {
       if (
-        !(await approve(
-          "ekatva: place a call?",
-          `${agent} wants to call ${number} from your phone.`,
-        ))
+        !(await ask("ekatva: place a call?", `${agent} wants to call ${number} from your phone.`))
       )
         return text("Declined: the user didn't allow this call.");
       await act("calls.dial", { number });
@@ -258,5 +284,5 @@ export async function serveMcp(agent = process.env.EKATVA_AGENT || "agent"): Pro
       ),
   );
 
-  await server.connect(new StdioServerTransport());
+  return server;
 }

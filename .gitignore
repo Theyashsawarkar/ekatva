@@ -13,3 +13,9 @@ coverage/
 # Python
 __pycache__/
 *.pyc
+
+# Rust (apps/daemon-rs)
+target/
+
+# Android builds of the connect module
+packages/connect/android/build/

@@ -5,9 +5,10 @@
  */
 import { execFile } from "node:child_process";
 import { randomBytes } from "node:crypto";
-import { chmodSync, existsSync, renameSync, rmSync } from "node:fs";
+import { chmodSync, existsSync, mkdirSync, renameSync, rmSync } from "node:fs";
 import { mkdir, readFile, writeFile } from "node:fs/promises";
 import { createServer, type Server } from "node:http";
+import { createServer as createNetServer, type Server as NetServer, type Socket } from "node:net";
 import { networkInterfaces, userInfo } from "node:os";
 import { dirname, join } from "node:path";
 import {
@@ -39,6 +40,7 @@ import {
   type LaptopApp,
   type LaptopContext,
   type LaptopServices,
+  type LocalRouter,
   type LocalServices,
   laptopRouter,
   localRouter,
@@ -54,7 +56,13 @@ import {
   type Undo,
   verify,
 } from "@ekatva/protocol";
-import { createTRPCClient, createWSClient, type TRPCClient, wsLink } from "@trpc/client";
+import {
+  createTRPCClient,
+  createWSClient,
+  type TRPCClient,
+  unstable_localLink,
+  wsLink,
+} from "@trpc/client";
 import { TRPCError } from "@trpc/server";
 import { applyWSSHandler } from "@trpc/server/adapters/ws";
 import { type WebSocket, WebSocketServer } from "ws";
@@ -98,6 +106,13 @@ export interface DaemonOptions {
   key: KeyPair;
   stateDir: string;
   socketPath: string;
+  /**
+   * The MCP socket: one agent session per connection (`ekatva-rs mcp`).
+   * Default: `ekatva/mcp.sock` beside socketPath; null: none.
+   */
+  mcpSocketPath?: string | null;
+  /** Asks the user to allow an agent's SMS or call (default: a zenity dialog). */
+  approve?: (title: string, body: string) => Promise<boolean>;
   /** dvarapala's log of finished requests (tests: a file of their own). */
   dvarapalaLog?: string;
   /** Where dvarapala and pramana hand over root requests; default beside socketPath. */
@@ -207,6 +222,8 @@ export class Daemon {
   private wss: WebSocketServer | null = null;
   private local: Server | null = null;
   private localWss: WebSocketServer | null = null;
+  private mcp: NetServer | null = null;
+  private mcpSessions = new Set<Socket>();
   private timers: ReturnType<typeof setInterval>[] = [];
   private stores: FileStore[] = [];
   private beacon: BeaconSender | null = null;
@@ -377,6 +394,7 @@ export class Daemon {
     );
     await this.listen();
     await this.listenLocal();
+    await this.listenMcp();
     await this.root.listen();
     // Watch the mailboxes when phones may reach the laptop from outside.
     if (this.o.config.tunnel.kind !== "none" && this.o.rendezvous !== false) {
@@ -488,6 +506,9 @@ export class Daemon {
     await new Promise<void>((r) => (this.localWss ? this.localWss.close(() => r()) : r()));
     await new Promise<void>((r) => (this.local ? this.local.close(() => r()) : r()));
     rmSync(this.o.socketPath, { force: true });
+    for (const s of this.mcpSessions) s.destroy();
+    await new Promise<void>((r) => (this.mcp ? this.mcp.close(() => r()) : r()));
+    if (this.mcp) rmSync(this.mcpPath(), { force: true });
     await this.root.close();
     for (const s of this.stores) await s.close();
   }
@@ -1252,20 +1273,11 @@ export class Daemon {
     rmSync(this.o.socketPath, { force: true });
     this.local = createServer((_req, res) => res.writeHead(404).end());
     this.localWss = new WebSocketServer({ server: this.local });
-    const me = userInfo().username;
     applyWSSHandler({
       wss: this.localWss,
       router: localRouter,
-      createContext: ({ info, req }): LaptopContext => ({
-        // `ekatva mcp` names its agent, so the log says who did it.
-        actor: { key: "local", name: agentLabel(me, info.connectionParams?.agent) },
-        agent: agentName(info.connectionParams?.agent) || undefined,
-        peer: () => programOf(req.socket),
-        grants: { has: (_c: Capability) => true },
-        journal: this.journal,
-        services: this.services,
-        local: this.localServices,
-      }),
+      // `ekatva mcp` names its agent, so the log says who did it.
+      createContext: ({ info, req }) => this.localContext(info.connectionParams?.agent, req.socket),
     });
     const old = process.umask(0o177);
     try {
@@ -1277,6 +1289,97 @@ export class Daemon {
       process.umask(old);
     }
     chmodSync(this.o.socketPath, 0o600);
+  }
+
+  /** What a call on the local router runs as: this laptop's user, or an agent acting for them. */
+  private localContext(agent: unknown, socket: unknown): LaptopContext {
+    return {
+      actor: { key: "local", name: agentLabel(userInfo().username, agent) },
+      agent: agentName(agent) || undefined,
+      peer: () => programOf(socket),
+      grants: { has: (_c: Capability) => true },
+      journal: this.journal,
+      services: this.services,
+      local: this.localServices,
+    };
+  }
+
+  // --------------------------------------------------------- the MCP socket
+  private mcpPath(): string {
+    return this.o.mcpSocketPath ?? join(dirname(this.o.socketPath), "ekatva", "mcp.sock");
+  }
+
+  /**
+   * AI agents' sessions, served here instead of a Node process each
+   * (`ekatva-rs mcp` pipes an agent's stdio to it). A connection sends
+   * `{"agent":"name"}` and a newline, then speaks MCP as on stdio. The
+   * tools are `ekatva mcp`'s, calling the local router in this process
+   * with the context the local socket gives that agent, so the log and
+   * the grants are the same. The socket is the user's own (0600 in a
+   * 0700 directory), as the local socket is.
+   */
+  private async listenMcp(): Promise<void> {
+    if (this.o.mcpSocketPath === null) return;
+    const path = this.mcpPath();
+    mkdirSync(dirname(path), { recursive: true, mode: 0o700 });
+    chmodSync(dirname(path), 0o700);
+    rmSync(path, { force: true });
+    this.mcp = createNetServer((socket) => this.mcpSession(socket));
+    const old = process.umask(0o177);
+    try {
+      await new Promise<void>((resolve, reject) => {
+        this.mcp?.once("error", reject);
+        this.mcp?.listen(path, () => resolve());
+      });
+    } finally {
+      process.umask(old);
+    }
+    chmodSync(path, 0o600);
+  }
+
+  private mcpSession(socket: Socket): void {
+    this.mcpSessions.add(socket);
+    socket.on("error", () => undefined);
+    socket.on("close", () => this.mcpSessions.delete(socket));
+    let head = Buffer.alloc(0);
+    const preamble = (chunk: Buffer) => {
+      head = Buffer.concat([head, chunk]);
+      const nl = head.indexOf(10);
+      if (nl < 0) {
+        if (head.length > 4096) socket.destroy();
+        return;
+      }
+      socket.off("data", preamble);
+      socket.pause();
+      let agent = "agent";
+      try {
+        const said = JSON.parse(head.subarray(0, nl).toString("utf8")) as { agent?: unknown };
+        if (typeof said?.agent === "string" && said.agent) agent = said.agent;
+      } catch {
+        socket.destroy();
+        return;
+      }
+      const rest = head.subarray(nl + 1);
+      if (rest.length) socket.unshift(rest);
+      void this.serveMcpOn(socket, agent).catch((e: Error) => {
+        this.log(`an MCP session failed: ${e.message}`);
+        socket.destroy();
+      });
+    };
+    socket.on("data", preamble);
+  }
+
+  private async serveMcpOn(socket: Socket, agent: string): Promise<void> {
+    // Loaded with the first session: the daemon doesn't carry the MCP SDK until an agent comes.
+    const { serveMcpStream, approve } = await import("./mcp.js");
+    const ctx = this.localContext(agent, socket);
+    const api = createTRPCClient<LocalRouter>({
+      links: [unstable_localLink({ router: localRouter, createContext: async () => ctx })],
+    });
+    if (socket.destroyed) return;
+    const server = await serveMcpStream(socket, socket, api, agent, this.o.approve ?? approve);
+    socket.on("close", () => void server.close().catch(() => undefined));
+    socket.resume();
   }
 }
 

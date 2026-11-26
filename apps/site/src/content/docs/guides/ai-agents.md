@@ -8,9 +8,16 @@ Any agent on the laptop that speaks MCP can use the phone through it: read
 its state, ring or lock it, read and send SMS, place calls, use its
 clipboard and files, keep the laptop awake.
 
-It talks to the daemon over the same local socket as the `ekatva` command
-(yours alone, mode 0600), so an agent can do nothing you couldn't from a
-terminal.
+The daemon serves the tools itself, on its MCP socket
+(`$XDG_RUNTIME_DIR/ekatva/mcp.sock`, yours alone, mode 0600); `ekatva mcp`
+is a small Rust pipe from the agent's stdio to it (`ekatva-rs`, built in
+`apps/daemon-rs`), so six sessions don't cost six Node processes. The tools
+call the same router as the `ekatva` command, so an agent can do nothing
+you couldn't from a terminal. When the service restarts (an update), the
+pipe reconnects: a call the old daemon didn't answer fails with "ekatva
+daemon restarted; try again", and the session goes on. Without the Rust
+binary, or with an older daemon, `ekatva mcp` is the Node server over the
+local socket, as before.
 
 ## Add it to an agent
 
