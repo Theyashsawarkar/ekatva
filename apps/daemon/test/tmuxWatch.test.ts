@@ -76,6 +76,34 @@ describe("tmux's control mode, from fixture output", () => {
   });
 });
 
+describe("a new server racing the folder watch", () => {
+  it("isn't missed when its socket appears before the folder is watched", async () => {
+    const dir = await fs.mkdtemp(join(tmpdir(), "ekatva-tw-"));
+    const sock = join(dir, "default");
+    await fs.writeFile(sock, "old");
+    const base = fakeSpawn();
+    let n = 0;
+    // The first try finds no server, and a new one binds its socket meanwhile.
+    const spawn = Object.assign(
+      (cmd: string, args: string[]) => {
+        const p = base(cmd, args);
+        if (n++ === 0) {
+          execFileSync("rm", [sock]);
+          execFileSync("touch", [sock]);
+          (p as unknown as { exit: (c: number, e: string) => void }).exit(1, "no server running");
+        }
+        return p;
+      },
+      { procs: base.procs },
+    );
+    const w = new TmuxWatch({ socketPath: sock, spawn, onChange: () => {}, onDown: () => {} });
+    w.start();
+    await until(() => base.procs.length === 2, 3000);
+    w.stop();
+    await fs.rm(dir, { recursive: true, force: true });
+  });
+});
+
 // A private tmux server, never the user's sessions.
 const socket = `ekatva-tw-${process.pid}`;
 const run = tmuxOn(socket);

@@ -13,7 +13,7 @@
  * running it watches tmux's socket folder for one to appear. Nothing in
  * your tmux config changes (no global hooks or options).
  */
-import { existsSync, type FSWatcher, watch } from "node:fs";
+import { existsSync, type FSWatcher, statSync, watch } from "node:fs";
 import { basename, dirname, join } from "node:path";
 import { LineChild, type Spawn } from "./lineChild.js";
 
@@ -62,6 +62,8 @@ export class TmuxWatch {
   /** Subscribed: its first answer came. */
   private subscribed = false;
   private readonly path: string;
+  /** The socket (inode) it last tried: a new server makes a new one. */
+  private tried: number | null = null;
   /** When it last came back after being closed, for a limit. */
   private rejoins: number[] = [];
 
@@ -91,6 +93,7 @@ export class TmuxWatch {
 
   private attach(): void {
     this.unwatchDir();
+    this.tried = this.inode();
     let failed = false;
     let started = false;
     const args = [
@@ -207,6 +210,9 @@ export class TmuxWatch {
         soon.unref?.();
       });
       this.dirWatch.on("error", () => this.unwatchDir());
+      // A server that made its socket before the folder was watched.
+      const now = this.inode();
+      if (now !== null && now !== this.tried) this.attach();
     } catch {
       // No folder yet (tmux never ran here): look now and then, starting nothing.
       this.dirTimer = setInterval(() => {
@@ -216,6 +222,10 @@ export class TmuxWatch {
       }, 10_000);
       this.dirTimer.unref?.();
     }
+  }
+
+  private inode(): number | null {
+    return statSync(this.path, { throwIfNoEntry: false })?.ino ?? null;
   }
 
   private unwatchDir(): void {
