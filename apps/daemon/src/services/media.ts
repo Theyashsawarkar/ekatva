@@ -11,6 +11,7 @@ import { readFile, stat } from "node:fs/promises";
 import { fileURLToPath } from "node:url";
 import type { Done, Media, MediaAction, Player } from "@ekatva/protocol";
 import { TRPCError } from "@trpc/server";
+import { debounce, LineChild, realSpawn, type Spawn } from "./lineChild.js";
 import { mpdQueue, type Queue } from "./mpd.js";
 
 export interface MediaHost {
@@ -28,7 +29,30 @@ export interface MediaHost {
   now(): number;
   /** The songs either side of the current one, for players that play through MPD (nāda). */
   queue?(): Promise<Queue | null>;
+  /**
+   * Starts long-lived helpers whose output says when something changed
+   * (dbus-monitor, pactl subscribe, udevadm monitor). Without it, watching
+   * polls every 1.5 s.
+   */
+  spawn?: Spawn;
 }
+
+type Part = "players" | "volume" | "brightness";
+const PARTS: readonly Part[] = ["players", "volume", "brightness"];
+/** While watched, everything is read again this often, in case an event was missed. */
+const SAFETY_MS = 30_000;
+/**
+ * MPRIS players' signals on the session bus, one line each (--profile): a
+ * property changed (status, track, volume), a seek, a player came or went.
+ * Positions aren't signalled: the phone moves a playing track on itself.
+ */
+const DBUS_ARGS = [
+  "--session",
+  "--profile",
+  "type='signal',interface='org.freedesktop.DBus.Properties',member='PropertiesChanged',path='/org/mpris/MediaPlayer2'",
+  "type='signal',interface='org.mpris.MediaPlayer2.Player',member='Seeked',path='/org/mpris/MediaPlayer2'",
+  "type='signal',sender='org.freedesktop.DBus',interface='org.freedesktop.DBus',member='NameOwnerChanged',arg0namespace='org.mpris.MediaPlayer2'",
+];
 
 /** Players whose queue is MPD's. */
 const MPD_PLAYERS = new Set(["nada", "mpd"]);
@@ -59,6 +83,7 @@ export const realMediaHost: MediaHost = {
   },
   now: () => Date.now(),
   queue: () => mpdQueue().catch(() => null),
+  spawn: realSpawn,
   // ffmpeg reads files and https alike; 192 px wide is plenty for a 64 dp label at 3x.
   cover: (source) =>
     new Promise((resolve) => {
@@ -140,8 +165,23 @@ export class MediaService {
   private artUrls = new Map<string, string>();
   private art_ = new Map<string, string | null>();
   private listeners = new Set<(m: Media) => void>();
+  /** Polls the parts nothing reports (every `everyMs`). */
   private timer: ReturnType<typeof setInterval> | null = null;
+  /** A slow look at everything while watched, in case an event was missed. */
+  private safety: ReturnType<typeof setInterval> | null = null;
   private last = "";
+  /** What watchers were told last, part by part. */
+  private current: Media | null = null;
+  /** The event source of each part, while watched. */
+  private sources = new Map<Part, LineChild>();
+  /** Parts whose event source runs right now. */
+  private live = new Set<Part>();
+  /** Parts to read again on the next look. */
+  private dirty = new Set<Part>();
+  /** Tell watchers on the next look even if nothing but positions moved (a seek). */
+  private forced = false;
+  private flushing: Promise<void> | null = null;
+  private kick = debounce(() => void this.flush().catch(() => undefined), 100);
 
   constructor(
     private readonly host: MediaHost = realMediaHost,
@@ -366,18 +406,148 @@ export class MediaService {
     return JSON.stringify({ ...m, players: m.players.map(({ position: _, at: __, ...p }) => p) });
   }
 
-  private async tick(force = false): Promise<void> {
-    if (!this.listeners.size) return;
-    const m = await this.get();
-    const shape = MediaService.shape(m);
-    if (!force && shape === this.last) return;
-    this.last = shape;
-    for (const cb of this.listeners) cb(m);
+  /** Reads the parts marked dirty (all of them the first time) and tells watchers of a change. */
+  private flush(): Promise<void> {
+    if (this.flushing) {
+      // One more look once this one is done, for what changed meanwhile.
+      return this.flushing.then(() => (this.dirty.size || this.forced ? this.flush() : undefined));
+    }
+    this.flushing = (async () => {
+      if (!this.listeners.size) return;
+      const parts = this.current ? [...this.dirty] : [...PARTS];
+      this.dirty.clear();
+      const force = this.forced;
+      this.forced = false;
+      if (!parts.length && !force) return;
+      const m: Media = this.current
+        ? { ...this.current }
+        : { players: [], volume: null, brightness: null };
+      await Promise.all([
+        parts.includes("players") ? this.players().then((v) => (m.players = v)) : null,
+        parts.includes("volume") ? this.volumeNow().then((v) => (m.volume = v)) : null,
+        parts.includes("brightness") ? this.brightnessNow().then((v) => (m.brightness = v)) : null,
+      ]);
+      this.current = m;
+      const shape = MediaService.shape(m);
+      if (!force && shape === this.last) return;
+      this.last = shape;
+      for (const cb of this.listeners) cb(m);
+    })().finally(() => {
+      this.flushing = null;
+    });
+    return this.flushing;
+  }
+
+  private mark(parts: readonly Part[], force = false, now = false): void {
+    for (const p of parts) this.dirty.add(p);
+    if (force) this.forced = true;
+    if (now) void this.flush().catch(() => undefined);
+    else this.kick();
   }
 
   /** After a change of ours: tell watchers now, positions included. */
   private poke(): void {
-    setTimeout(() => void this.tick(true).catch(() => undefined), 150);
+    setTimeout(() => this.mark(PARTS, true, true), 150);
+  }
+
+  /** A part is polled when nothing reports its changes and it's there to report. */
+  private needsPoll(part: Part): boolean {
+    if (this.live.has(part)) return false;
+    return part === "players" || (this.current?.[part] ?? null) !== null;
+  }
+
+  private planPoll(): void {
+    const want = this.listeners.size > 0 && PARTS.some((p) => this.needsPoll(p));
+    if (want && !this.timer) {
+      this.timer = setInterval(
+        () =>
+          this.mark(
+            PARTS.filter((p) => this.needsPoll(p)),
+            false,
+            true,
+          ),
+        this.everyMs,
+      );
+      this.timer.unref?.();
+    } else if (!want && this.timer) {
+      clearInterval(this.timer);
+      this.timer = null;
+    }
+  }
+
+  /** Starts the event sources: MPRIS signals, PipeWire's (pulse) events, backlight uevents. */
+  private watch(first: Media): void {
+    const spawn = this.host.spawn;
+    if (spawn) {
+      const source = (part: Part, cmd: string, args: string[], seen: (line: string) => void) => {
+        const child = new LineChild({
+          cmd,
+          args,
+          spawn,
+          onLine: seen,
+          onStart: () => {
+            this.live.add(part);
+            this.planPoll();
+          },
+          onExit: () => {
+            // Whatever changed while it was gone.
+            this.live.delete(part);
+            this.mark([part]);
+            this.planPoll();
+          },
+          onDown: () => {
+            this.live.delete(part);
+            this.sources.delete(part);
+            this.planPoll();
+          },
+        });
+        this.sources.set(part, child);
+        child.start();
+      };
+      source("players", "dbus-monitor", DBUS_ARGS, (line) => {
+        const member = line.split("\t")[7];
+        if (member === "Seeked") this.mark(["players"], true);
+        else if (member === "PropertiesChanged" || member === "NameOwnerChanged")
+          this.mark(["players"]);
+      });
+      if (first.volume)
+        source("volume", "pactl", ["subscribe"], (line) => {
+          if (/^Event '(new|change|remove)' on (sink|server)( #|$)/.test(line))
+            this.mark(["volume"]);
+        });
+      if (first.brightness !== null)
+        source(
+          "brightness",
+          "udevadm",
+          ["monitor", "--udev", "--subsystem-match=backlight"],
+          (line) => {
+            if (/^(UDEV|KERNEL)\s*\[.*\bchange\b/.test(line)) this.mark(["brightness"]);
+          },
+        );
+      this.safety = setInterval(() => this.mark(PARTS), SAFETY_MS);
+      this.safety.unref?.();
+    }
+    this.planPoll();
+  }
+
+  private unwatch(): void {
+    for (const s of this.sources.values()) s.stop();
+    this.sources.clear();
+    this.live.clear();
+    this.dirty.clear();
+    this.kick.cancel();
+    if (this.timer) clearInterval(this.timer);
+    if (this.safety) clearInterval(this.safety);
+    this.timer = null;
+    this.safety = null;
+    this.current = null;
+  }
+
+  /** How each part is watched right now (for tests). */
+  get watching(): Record<Part, "events" | "polling" | "idle"> {
+    const of = (p: Part) =>
+      this.live.has(p) ? "events" : this.timer && this.needsPoll(p) ? "polling" : "idle";
+    return { players: of("players"), volume: of("volume"), brightness: of("brightness") };
   }
 
   async *changes(signal: AbortSignal | undefined): AsyncGenerator<Media> {
@@ -389,8 +559,11 @@ export class MediaService {
       wake?.();
     };
     this.listeners.add(cb);
-    if (this.listeners.size === 1) this.last = MediaService.shape(first);
-    this.timer ??= setInterval(() => void this.tick().catch(() => undefined), this.everyMs);
+    if (this.listeners.size === 1) {
+      this.last = MediaService.shape(first);
+      this.current = first;
+      this.watch(first);
+    }
     try {
       while (!signal?.aborted) {
         const next = queue.shift();
@@ -405,15 +578,12 @@ export class MediaService {
       }
     } finally {
       this.listeners.delete(cb);
-      if (!this.listeners.size && this.timer) {
-        clearInterval(this.timer);
-        this.timer = null;
-      }
+      if (!this.listeners.size) this.unwatch();
     }
   }
 
   stop(): void {
-    if (this.timer) clearInterval(this.timer);
-    this.timer = null;
+    this.listeners.clear();
+    this.unwatch();
   }
 }
