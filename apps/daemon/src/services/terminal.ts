@@ -14,6 +14,7 @@ import type { Done, TerminalScreen, TerminalSession, TerminalTab } from "@ekatva
 import { TRPCError } from "@trpc/server";
 import { home } from "../paths.js";
 import { tmux as defaultTmux, type Tmux } from "./agents.js";
+import { WATCH_SESSION } from "./tmuxWatch.js";
 
 /** The session opened when the laptop has none (tmux always runs in the terminal). */
 export const FIRST_SESSION = "main";
@@ -80,24 +81,27 @@ export class TerminalService {
       if (noServer(e)) return [];
       throw e;
     }
-    return out
-      .split("\n")
-      .filter(Boolean)
-      .map((l) => {
-        const [name, windows, attached, activity, last] = l.split("\t");
-        return {
-          name: name ?? "",
-          windows: Number(windows ?? 0),
-          attached: Number(attached ?? 0) > 0,
-          activity: Number(activity ?? 0) * 1000,
-          lastAttached: Number(last ?? 0) * 1000,
-        };
-      })
-      .sort(
-        (a, b) =>
-          Number(b.attached) - Number(a.attached) ||
-          Math.max(b.lastAttached, b.activity) - Math.max(a.lastAttached, a.activity),
-      );
+    return (
+      out
+        .split("\n")
+        // ekatva's own watching session (agents' events) isn't one of yours.
+        .filter((l) => l && !l.startsWith(`${WATCH_SESSION}\t`))
+        .map((l) => {
+          const [name, windows, attached, activity, last] = l.split("\t");
+          return {
+            name: name ?? "",
+            windows: Number(windows ?? 0),
+            attached: Number(attached ?? 0) > 0,
+            activity: Number(activity ?? 0) * 1000,
+            lastAttached: Number(last ?? 0) * 1000,
+          };
+        })
+        .sort(
+          (a, b) =>
+            Number(b.attached) - Number(a.attached) ||
+            Math.max(b.lastAttached, b.activity) - Math.max(a.lastAttached, a.activity),
+        )
+    );
   }
 
   /** The tabs (windows) of one session. */

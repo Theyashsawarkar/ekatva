@@ -7,7 +7,7 @@
  * Replies go in with bracketed paste, so newlines don't submit early.
  */
 import { execFile } from "node:child_process";
-import { readFileSync, statSync } from "node:fs";
+import { type FSWatcher, readFileSync, statSync, watch } from "node:fs";
 import { readdir, stat } from "node:fs/promises";
 import { basename, join } from "node:path";
 import type {
@@ -24,28 +24,69 @@ import { backgroundAgents, readScreen, readyForInput } from "./agentScreen.js";
 import { transcript } from "./agentTranscript.js";
 import { ClaudeHistory } from "./claudeHistory.js";
 import { type ClaudeSession, ClaudeSessions, within } from "./claudeSessions.js";
+import { debounce } from "./lineChild.js";
+import { TmuxWatch, WATCH_SESSION } from "./tmuxWatch.js";
 
 const AGENTS = { claude: "claude", codex: "codex", aider: "aider", gemini: "gemini" } as const;
 type Kind = AgentSession["agent"];
 
-export type Tmux = (args: string[], input?: string) => Promise<string>;
+export type Tmux = ((args: string[], input?: string) => Promise<string>) & {
+  /** Set on a real tmux (tmuxOn): its server can be watched in control mode. */
+  control?: { socket?: string };
+};
+
+/** Says when agents' sessions may have changed, instead of asking every 1.5 s. */
+export interface AgentEvents {
+  /** `down`: it can't (then the list is polled, as before). */
+  start(changed: (why: string) => void, down: () => void): void;
+  stop(): void;
+}
+
+/** tmux's control mode on the server `run` talks to; null for a tmux that isn't real (tests' fakes). */
+export function tmuxEvents(run: Tmux, log?: (m: string) => void): AgentEvents | null {
+  if (!run.control) return null;
+  let w: TmuxWatch | null = null;
+  return {
+    start(changed, down) {
+      w?.stop();
+      w = new TmuxWatch({
+        ...(run.control?.socket ? { socket: run.control.socket } : {}),
+        onChange: changed,
+        onDown: down,
+        ...(log ? { log } : {}),
+        onlyOurs: async () => {
+          const names = (await run(["list-sessions", "-F", "#{session_name}"])).split("\n");
+          if (names.some((n) => n && n !== WATCH_SESSION)) return false;
+          return (await run(["show-options", "-gv", "exit-empty"])).trim() !== "off";
+        },
+      });
+      w.start();
+    },
+    stop() {
+      w?.stop();
+      w = null;
+    },
+  };
+}
 
 /** tmux, on the default server or (for tests) a private socket. */
-export const tmuxOn =
-  (socket?: string): Tmux =>
-  (args, input) =>
-    new Promise((resolve, reject) => {
-      const child = execFile(
-        "tmux",
-        socket ? ["-L", socket, ...args] : args,
-        { timeout: 5000, maxBuffer: 8 * 1024 * 1024 },
-        (err, out, errOut) => {
-          if (err) reject(new Error(String(errOut || err.message).trim()));
-          else resolve(String(out));
-        },
-      );
-      if (input !== undefined) child.stdin?.end(input);
-    });
+export const tmuxOn = (socket?: string): Tmux =>
+  Object.assign(
+    (args: string[], input?: string) =>
+      new Promise<string>((resolve, reject) => {
+        const child = execFile(
+          "tmux",
+          socket ? ["-L", socket, ...args] : args,
+          { timeout: 5000, maxBuffer: 8 * 1024 * 1024 },
+          (err, out, errOut) => {
+            if (err) reject(new Error(String(errOut || err.message).trim()));
+            else resolve(String(out));
+          },
+        );
+        if (input !== undefined) child.stdin?.end(input);
+      }),
+    { control: socket ? { socket } : {} },
+  );
 
 export const tmux = tmuxOn();
 
@@ -65,6 +106,16 @@ export class AgentsService {
   private listeners = new Set<(s: AgentSession[]) => void>();
   private poller: ReturnType<typeof setInterval> | null = null;
   private last = "";
+  /** While watched by events: a slow look in case one was missed. */
+  private safety: ReturnType<typeof setInterval> | null = null;
+  /** Claude's own records: its sessions' folder, and the transcripts of the sessions listed. */
+  private fsWatches = new Map<string, FSWatcher>();
+  /** The transcripts behind the sessions listed last. */
+  private files = new Set<string>();
+  private evented = false;
+  /** A burst of changes is one look, at most one a second (an agent at work prints all the time). */
+  private kick = debounce(() => void this.refresh().catch(() => undefined), 100, 1000);
+  private readonly events: AgentEvents | null;
 
   constructor(
     private readonly run: Tmux = tmux,
@@ -73,9 +124,12 @@ export class AgentsService {
     /** How often `deliver` looks at a starting agent's screen. */
     private readonly stepMs = 500,
     /** Claude Code's folder. */
-    claudeDir = join(home(), ".claude"),
+    private readonly claudeDir = join(home(), ".claude"),
+    /** What says when sessions change (default: tmux's control mode on `run`'s server); null polls. */
+    events?: AgentEvents | null,
   ) {
     this.claude = new ClaudeSessions(claudeDir);
+    this.events = events === undefined ? tmuxEvents(run) : events;
   }
 
   private readonly claude: ClaudeSessions;
@@ -90,10 +144,11 @@ export class AgentsService {
       return []; // no tmux server: no sessions
     }
     const sessions: AgentSession[] = [];
+    const files = new Set<string>();
     const own = await this.own(out);
     for (const line of out.split("\n")) {
       const [id, session, window, command, path, wait, title] = line.split("\t");
-      if (!id || !command) continue;
+      if (!id || !command || session === WATCH_SESSION) continue;
       const agent = (Object.keys(AGENTS) as (keyof typeof AGENTS)[]).find((k) =>
         command.toLowerCase().includes(AGENTS[k]),
       );
@@ -113,6 +168,7 @@ export class AgentsService {
       const state = seen === "idle" && wait ? "done" : seen;
       // The list never waits for a history to be read: what's known of it so far.
       const file = mine ? await this.claude.transcript(mine) : null;
+      if (file) files.add(file);
       const history = file ? (this.histories.get(file) ?? null) : null;
       if (history) await history.refresh().catch(() => undefined);
       else if (mine?.status === "busy") void this.historyOf(mine).catch(() => undefined);
@@ -140,10 +196,11 @@ export class AgentsService {
         background,
       });
     }
+    this.files = files;
     return sessions;
   }
 
-  /** The session list each time it changes (polling tmux while anyone listens). */
+  /** The session list each time it changes (told by tmux while anyone listens, else polled). */
   async *changes(signal: AbortSignal | undefined): AsyncGenerator<AgentSession[]> {
     const queue: AgentSession[][] = [await this.list()];
     let wake: (() => void) | null = null;
@@ -152,7 +209,7 @@ export class AgentsService {
       wake?.();
     };
     this.listeners.add(cb);
-    this.poll();
+    if (this.listeners.size === 1) this.watch();
     try {
       while (!signal?.aborted) {
         const next = queue.shift();
@@ -167,16 +224,82 @@ export class AgentsService {
       }
     } finally {
       this.listeners.delete(cb);
-      if (!this.listeners.size && this.poller) {
-        clearInterval(this.poller);
-        this.poller = null;
-      }
+      if (!this.listeners.size) this.unwatch();
     }
+  }
+
+  /** Starts watching: tmux's events and Claude's files, or polling when tmux can't tell. */
+  private watch(): void {
+    if (!this.events) {
+      this.poll();
+      return;
+    }
+    this.evented = true;
+    this.events.start(
+      () => this.kick(),
+      () => {
+        // Control mode doesn't work here: ask every 1.5 s, as before.
+        this.evented = false;
+        this.unwatchFiles();
+        if (this.listeners.size) this.poll();
+      },
+    );
+    this.watchFile(join(this.claudeDir, "sessions"));
+    this.safety = setInterval(() => this.kick(), 30_000);
+    this.safety.unref?.();
+  }
+
+  private unwatch(): void {
+    this.events?.stop();
+    this.evented = false;
+    this.kick.cancel();
+    if (this.poller) clearInterval(this.poller);
+    if (this.safety) clearInterval(this.safety);
+    this.poller = null;
+    this.safety = null;
+    this.unwatchFiles();
+  }
+
+  private watchFile(path: string): void {
+    if (this.fsWatches.has(path)) return;
+    try {
+      const w = watch(path, () => this.kick());
+      w.on("error", () => {
+        w.close();
+        this.fsWatches.delete(path);
+      });
+      this.fsWatches.set(path, w);
+    } catch {
+      // not there (yet): tmux's events still come
+    }
+  }
+
+  private unwatchFiles(): void {
+    for (const w of this.fsWatches.values()) w.close();
+    this.fsWatches.clear();
+  }
+
+  /** Watches the transcripts of the sessions listed now, and no others. */
+  private followFiles(): void {
+    if (!this.evented) return;
+    const sessions = join(this.claudeDir, "sessions");
+    for (const [path, w] of this.fsWatches)
+      if (path !== sessions && !this.files.has(path)) {
+        w.close();
+        this.fsWatches.delete(path);
+      }
+    for (const f of this.files) this.watchFile(f);
+  }
+
+  /** How the list is watched now (for tests). */
+  get watching(): "events" | "polling" | "idle" {
+    return this.poller ? "polling" : this.evented ? "events" : "idle";
   }
 
   /** Called by the hooks bridge (or the poller) when something may have changed. */
   async refresh(): Promise<AgentSession[]> {
     const now = await this.list();
+    this.followFiles();
     const key = JSON.stringify(now.map(({ since: _s, ...rest }) => rest));
     if (key !== this.last) {
       this.last = key;
@@ -188,6 +311,7 @@ export class AgentsService {
   private poll(): void {
     if (this.poller) return;
     this.poller = setInterval(() => void this.refresh().catch(() => undefined), 1500);
+    this.poller.unref?.();
   }
 
   private capture(id: string, lines: number): Promise<string> {
@@ -496,10 +620,16 @@ export class AgentsService {
     } catch {
       // no Claude config
     }
-    const panes = await this.run(["list-panes", "-a", "-F", "#{pane_current_path}"]).catch(
-      () => "",
-    );
-    for (const p of panes.split("\n")) if (p) found.set(p, null);
+    const panes = await this.run([
+      "list-panes",
+      "-a",
+      "-F",
+      "#{session_name}\t#{pane_current_path}",
+    ]).catch(() => "");
+    for (const l of panes.split("\n")) {
+      const [session, p] = l.split("\t");
+      if (p && session !== WATCH_SESSION) found.set(p, null);
+    }
     for (const r of this.roots.map(expand)) {
       for (const n of await readdir(r).catch(() => [] as string[])) {
         const p = join(r, n);
@@ -526,7 +656,8 @@ export class AgentsService {
   }
 
   shutdown(): void {
-    if (this.poller) clearInterval(this.poller);
+    this.listeners.clear();
+    this.unwatch();
   }
 }
 
