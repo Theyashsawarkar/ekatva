@@ -36,16 +36,18 @@ describe("beacon sender", () => {
     const got: Buffer[] = [];
     rx.on("message", (m) => got.push(m));
     let direct = false;
+    let connected = false;
     const sender = new BeaconSender(
       laptop,
       () => [
-        { key: toB64u(phone.publicKey), direct },
-        { key: toB64u(other.publicKey), direct },
+        { key: toB64u(phone.publicKey), direct, connected },
+        { key: toB64u(other.publicKey), direct: direct && connected, connected },
       ],
       () => 47100,
       {
         everyMs: 60_000,
         quietEvery: 3,
+        connectedEvery: 2,
         targets: () => ["127.0.0.1"],
         beaconPort: (rx.address() as AddressInfo).port,
       },
@@ -56,8 +58,22 @@ describe("beacon sender", () => {
     const opened = got.map((m) => openBeacon(k, new Uint8Array(m)));
     expect(opened.filter(Boolean)).toHaveLength(1);
     expect(opened.find(Boolean)?.port).toBe(47100);
+    // Everyone connected, one through the tunnel: one round in `connectedEvery`.
+    connected = true;
+    got.length = 0;
+    for (let i = 0; i < 4; i++) sender.send();
+    await new Promise((r) => setTimeout(r, 100));
+    expect(got.length).toBe(4);
+    // A phone drops: every round again.
+    connected = false;
+    got.length = 0;
+    sender.send();
+    sender.send();
+    await new Promise((r) => setTimeout(r, 100));
+    expect(got.length).toBe(4);
     // Everyone connected directly: only one round in `quietEvery`.
     direct = true;
+    connected = true;
     got.length = 0;
     sender.send();
     sender.send();

@@ -115,6 +115,39 @@ export class Ntfy {
     if (!r.ok) throw new Error(`ntfy: ${r.status}`);
   }
 
+  /**
+   * Listens on topics (one long-lived request): `onEvent` gets each event's
+   * type ("open", "keepalive", "message"...) as it arrives. Resolves when
+   * the server ends it, rejects on an error; abort `signal` to stop.
+   */
+  async stream(
+    topics: string[],
+    onEvent: (event: string) => void,
+    signal: AbortSignal,
+  ): Promise<void> {
+    const r = await this.fetchFn(`${this.server}/${topics.join(",")}/json`, { signal });
+    if (!r.ok || !r.body) throw new Error(`ntfy: ${r.status}`);
+    const reader = r.body.getReader();
+    const text = new TextDecoder();
+    let buf = "";
+    for (;;) {
+      const { done, value } = await reader.read();
+      if (done) return;
+      buf += text.decode(value, { stream: true });
+      for (let i = buf.indexOf("\n"); i >= 0; i = buf.indexOf("\n")) {
+        const line = buf.slice(0, i);
+        buf = buf.slice(i + 1);
+        try {
+          const m = JSON.parse(line);
+          if (typeof m.event === "string") onEvent(m.event);
+        } catch {
+          // skip
+        }
+      }
+      if (buf.length > 1 << 20) buf = "";
+    }
+  }
+
   /** Messages since `since` (an ntfy id, or a duration like "10m"). */
   async poll(topic: string, since = "10m"): Promise<{ id: string; message: string }[]> {
     const r = await this.request(

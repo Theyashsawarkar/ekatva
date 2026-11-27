@@ -245,11 +245,17 @@ export class Tunnel {
       this.setState("missing", 'set [tunnel] hostname for kind = "named"');
       return Promise.resolve({ url: null, lan: [] });
     }
+    // --protocol http2: cloudflared's default QUIC keeps the CPU awake ~44
+    // times a second per edge connection even with nothing flowing (a named
+    // tunnel holds 4: ~106 wakeups/s, 2 ms/s of CPU, all day); HTTP/2 over
+    // TCP idles at ~2 per connection and carries the phone's WebSocket the
+    // same way. Measured with throwaway quick tunnels, 90 s each.
+    const cf = ["tunnel", "--no-autoupdate", "--protocol", "http2", "--url", `http://${target}`];
     const args =
       kind === "named"
-        ? ["tunnel", "--no-autoupdate", "--url", `http://${target}`, "run", named?.name ?? ""]
+        ? [...cf, "run", named?.name ?? ""]
         : kind === "cloudflared"
-          ? ["tunnel", "--no-autoupdate", "--url", `http://${target}`]
+          ? cf
           : ["http", target, "--log", "stdout", "--log-format", "json"];
     if (this.restartTimer) clearTimeout(this.restartTimer);
     this.restartTimer = null;

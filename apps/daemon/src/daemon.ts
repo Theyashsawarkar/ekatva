@@ -486,9 +486,10 @@ export class Daemon {
       this.beacon = new BeaconSender(
         this.o.key,
         () =>
-          this.devices
-            .all()
-            .map((d) => ({ key: d.key, direct: this.peers.get(d.key)?.via === "lan" })),
+          this.devices.all().map((d) => {
+            const via = this.peers.get(d.key)?.via;
+            return { key: d.key, direct: via === "lan", connected: via !== undefined };
+          }),
         () => this.port,
         {
           log: (m) => this.log(m),
@@ -977,6 +978,7 @@ export class Daemon {
   }
 
   private emitDevices(): void {
+    this.rendezvous?.refresh();
     const list = this.deviceList();
     for (const cb of this.deviceListeners) cb(list);
   }

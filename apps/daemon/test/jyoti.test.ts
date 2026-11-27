@@ -98,6 +98,43 @@ describe("jyoti", () => {
     c.shutdown();
   });
 
+  it("high: told by logind and UPower, it reads the lid only on a change", async () => {
+    vi.useFakeTimers();
+    let changed: (() => void) | null = null;
+    let down: (() => void) | null = null;
+    let stopped = 0;
+    let reads = 0;
+    const h = host();
+    const read = h.lidClosed;
+    h.lidClosed = () => {
+      reads++;
+      return read();
+    };
+    h.watchPower = (onChange, onDown) => {
+      changed = onChange;
+      down = onDown;
+      return { stop: () => stopped++ };
+    };
+    const c = new JyotiService(h, join(dir, "jyoti.json"), join(dir, "jyoti/enabled"));
+    await c.set("high", null);
+    const before = reads;
+    lid = true;
+    await vi.advanceTimersByTimeAsync(10_000);
+    expect(reads).toBe(before); // no polling while watched
+    expect(calls).not.toContain("lock");
+    (changed as unknown as () => void)();
+    expect(calls).toContain("lock");
+    // The watch fails: it polls instead.
+    lid = false;
+    (down as unknown as () => void)();
+    await vi.advanceTimersByTimeAsync(2100);
+    lid = true;
+    await vi.advanceTimersByTimeAsync(2100);
+    expect(calls.filter((x) => x === "lock")).toHaveLength(2);
+    c.shutdown();
+    expect(stopped).toBe(1);
+  });
+
   it("high drops to on when the battery runs low", async () => {
     vi.useFakeTimers();
     const c = make();

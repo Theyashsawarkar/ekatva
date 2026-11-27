@@ -33,7 +33,19 @@ import { mkdir, readFile, rm, writeFile } from "node:fs/promises";
 import { dirname, join } from "node:path";
 import type { Done, Jyoti, JyotiLevel } from "@ekatva/protocol";
 import { home } from "../paths.js";
+import { LineChild } from "./lineChild.js";
 import { lockScreen } from "./system.js";
+
+/**
+ * logind's LidClosed and UPower's battery both send PropertiesChanged on the
+ * system bus; dbus-monitor (falling back to a plain match, no root needed)
+ * prints one line per signal, so ekatva wakes only when one of them moves.
+ */
+export const POWER_WATCH_ARGS = [
+  "--system",
+  "type='signal',sender='org.freedesktop.login1',path='/org/freedesktop/login1',interface='org.freedesktop.DBus.Properties',member='PropertiesChanged'",
+  "type='signal',sender='org.freedesktop.UPower',path='/org/freedesktop/UPower/devices/DisplayDevice',interface='org.freedesktop.DBus.Properties',member='PropertiesChanged'",
+];
 
 export interface Host {
   /** Runs a command; resolves with its exit code and output. */
@@ -46,6 +58,12 @@ export interface Host {
   lidClosed(): boolean | null;
   /** Battery percent and whether it's discharging, or null. */
   battery(): { percent: number; discharging: boolean } | null;
+  /**
+   * Calls onChange when the lid or the battery may have changed (and once
+   * on each start), so they're read only then; calls onDown when it can't
+   * watch (and the lid is polled instead). Without it, the lid is polled.
+   */
+  watchPower?(onChange: () => void, onDown: () => void): { stop(): void };
   now(): number;
 }
 
@@ -111,6 +129,20 @@ export const realHost: Host = {
     }
     return null;
   },
+  watchPower(onChange, onDown) {
+    const child = new LineChild({
+      cmd: "dbus-monitor",
+      args: POWER_WATCH_ARGS,
+      onLine: (line) => {
+        if (line.includes("member=PropertiesChanged")) onChange();
+      },
+      // A change while it was (re)starting isn't missed.
+      onStart: () => onChange(),
+      onDown: () => onDown(),
+    });
+    child.start();
+    return { stop: () => child.stop() };
+  },
   now: () => Date.now(),
 };
 
@@ -123,6 +155,7 @@ export class JyotiService {
   private holder: Holder | null = null;
   private timer: ReturnType<typeof setTimeout> | null = null;
   private lidTimer: ReturnType<typeof setInterval> | null = null;
+  private powerWatch: { stop(): void } | null = null;
   private lidWasClosed = false;
   private stoppedSwayidle = false;
   private listeners = new Set<(c: Jyoti) => void>();
@@ -258,8 +291,7 @@ export class JyotiService {
     this.holder = null;
     if (this.timer) clearTimeout(this.timer);
     this.timer = null;
-    if (this.lidTimer) clearInterval(this.lidTimer);
-    this.lidTimer = null;
+    this.unwatchLid();
 
     if (level === "off") {
       await this.idleBack();
@@ -288,10 +320,15 @@ export class JyotiService {
     await this.host.run(join(home(), ".local/bin/waybar-signal"), ["12"]).catch(() => undefined);
   }
 
-  /** At "high": lock when the lid closes; drop to "on" when the battery runs low. */
+  /**
+   * At "high": lock when the lid closes; drop to "on" when the battery runs
+   * low. Told by logind and UPower when either changes; polled every 2 s
+   * only when that can't be watched.
+   */
   private watchLid(): void {
     this.lidWasClosed = this.host.lidClosed() === true;
-    this.lidTimer = setInterval(() => {
+    const check = () => {
+      if (this.level !== "high") return;
       const closed = this.host.lidClosed() === true;
       if (closed && !this.lidWasClosed) void this.host.lock().catch(() => undefined);
       this.lidWasClosed = closed;
@@ -305,7 +342,19 @@ export class JyotiService {
           this.onAuto(`Jyoti dropped from Nandādīpa to Akhaṇḍa: battery at ${b.percent}%`, "high"),
         );
       }
-    }, 2000);
+    };
+    const poll = () => {
+      if (!this.lidTimer) this.lidTimer = setInterval(check, 2000);
+    };
+    if (this.host.watchPower) this.powerWatch = this.host.watchPower(check, poll);
+    else poll();
+  }
+
+  private unwatchLid(): void {
+    this.powerWatch?.stop();
+    this.powerWatch = null;
+    if (this.lidTimer) clearInterval(this.lidTimer);
+    this.lidTimer = null;
   }
 
   /**
@@ -353,6 +402,6 @@ export class JyotiService {
   shutdown(): void {
     this.holder?.stop();
     if (this.timer) clearTimeout(this.timer);
-    if (this.lidTimer) clearInterval(this.lidTimer);
+    this.unwatchLid();
   }
 }

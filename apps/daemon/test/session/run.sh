@@ -31,9 +31,28 @@ command -v sway >/dev/null && command -v dbus-run-session >/dev/null || {
 }
 # Never the real desktop's sway, bus or tmux.
 unset SWAYSOCK I3SOCK WAYLAND_DISPLAY DISPLAY DBUS_SESSION_BUS_ADDRESS TMUX TMUX_PANE LD_PRELOAD
-# Short: sway's IPC socket path must fit in 108 bytes.
+real_rt=${XDG_RUNTIME_DIR:-/run/user/$(id -u)} # where the user's systemd is
+# Short: sway's IPC socket path must fit in 108 bytes. Set before the bus
+# starts, so nothing it starts (a portal) touches the real one.
 export XDG_RUNTIME_DIR=/run/user/$(id -u)/eks$$
 mkdir -m 700 -p "$XDG_RUNTIME_DIR"
-trap 'rm -rf "$XDG_RUNTIME_DIR"' EXIT
+# Everything runs in a scope of its own, stopped at the end: whatever the bus
+# or sway started (portals, a stray child) goes with it, instead of
+# outliving the run (they once sat for days). Then any FUSE mount a portal
+# left in the folder, then the folder.
+unit=ekatva-session-$$
+cleanup() {
+  XDG_RUNTIME_DIR=$real_rt systemctl --user stop "$unit.scope" 2>/dev/null
+  for m in $(grep -o " $XDG_RUNTIME_DIR/[^ ]*" /proc/mounts 2>/dev/null); do
+    fusermount3 -uz "$m" 2>/dev/null || fusermount -uz "$m" 2>/dev/null
+  done
+  rm -rf "$XDG_RUNTIME_DIR"
+}
+trap cleanup EXIT
+trap 'exit 130' INT TERM
 export GTK_A11Y=none NO_AT_BRIDGE=1 GDK_DEBUG=no-portals GTK_USE_PORTAL=0 EKATVA_SESSION_INNER=1
-dbus-run-session -- bash "$0" "$@"
+scope=()
+XDG_RUNTIME_DIR=$real_rt systemd-run --user --scope --collect -q -u "$unit-probe" true 2>/dev/null &&
+  scope=(env XDG_RUNTIME_DIR="$real_rt" systemd-run --user --scope --collect -q -u "$unit" --
+    env XDG_RUNTIME_DIR="$XDG_RUNTIME_DIR")
+"${scope[@]}" dbus-run-session -- bash "$0" "$@"

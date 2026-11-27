@@ -14,6 +14,8 @@
 #
 # Exit 0 only when every check passed; screenshots of each step land in shots-dir.
 set -euo pipefail
+# shellcheck source=scope.sh
+source "$(dirname "$0")/scope.sh"
 here=$(cd "$(dirname "$0")" && pwd)
 repo=$(cd "$here/../../../.." && pwd)
 sdk=${ANDROID_HOME:-$HOME/Android/Sdk}
@@ -64,6 +66,7 @@ cleanup() {
     grep -qs "XDG_RUNTIME_DIR=$D/run" "/proc/$p/environ" 2>/dev/null && kill "$p" 2>/dev/null || true
   done
   rm -rf "$D"
+  scope_end
 }
 trap cleanup EXIT
 for f in "$apk" "$echo_apk"; do [ -f "$f" ] || { echo "no $f: build it first (see the top of this script)"; exit 1; }; done

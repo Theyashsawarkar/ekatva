@@ -42,6 +42,8 @@ describe("tunnel", () => {
       "cloudflared",
       "tunnel",
       "--no-autoupdate",
+      "--protocol",
+      "http2",
       "--url",
       "http://127.0.0.1:47100",
     ]);
@@ -65,6 +67,8 @@ describe("tunnel", () => {
       "cloudflared",
       "tunnel",
       "--no-autoupdate",
+      "--protocol",
+      "http2",
       "--url",
       "http://127.0.0.1:47100",
       "run",
@@ -329,6 +333,83 @@ describe("rendezvous on the laptop", () => {
     await rv.check();
     expect((await ntfy.poll(mb.topic)).length).toBe(2);
     tunnel.stop();
+    server.close();
+  });
+  it("listens on a stream: a question is answered at once, with no polling", async () => {
+    const store: { id: string; topic: string; message: string }[] = [];
+    const streams: { topics: string[]; res: import("node:http").ServerResponse }[] = [];
+    let polls = 0;
+    const server = createServer((req, res) => {
+      const url = req.url ?? "";
+      const [, topic, rest] = url.split(/[/?]/);
+      if (req.method === "POST") {
+        let b = "";
+        req.on("data", (d) => (b += d));
+        req.on("end", () => {
+          store.push({ id: String(store.length + 1), topic: topic ?? "", message: b });
+          res.end("{}");
+          for (const s of streams)
+            if (s.topics.includes(topic ?? ""))
+              s.res.write(`${JSON.stringify({ event: "message" })}\n`);
+        });
+      } else if (rest === "json" && url.includes("poll=1")) {
+        polls++;
+        res.end(
+          store
+            .filter((m) => m.topic === topic)
+            .map((m) => JSON.stringify({ id: m.id, event: "message", message: m.message }))
+            .join("\n"),
+        );
+      } else if (rest === "json") {
+        res.writeHead(200, { "content-type": "application/x-ndjson" });
+        res.write(`${JSON.stringify({ event: "open" })}\n`);
+        streams.push({ topics: (topic ?? "").split(","), res });
+      } else res.writeHead(404).end();
+    });
+    await new Promise<void>((r) => server.listen(0, "127.0.0.1", () => r()));
+    const ntfy = new Ntfy(`http://127.0.0.1:${(server.address() as { port: number }).port}`);
+    const laptop = generateKeyPair();
+    const phone = generateKeyPair();
+    const tunnel = new Tunnel(
+      "cloudflared",
+      () => 47100,
+      undefined,
+      10,
+      fakeSpawner(["https://calm-sea.trycloudflare.com"], []),
+    );
+    const rv = new Rendezvous(
+      laptop,
+      () => [{ key: Buffer.from(phone.publicKey).toString("base64url"), name: "Pixel 8" }],
+      tunnel,
+      () => [],
+      ntfy,
+    );
+    const until = async (ok: () => boolean) => {
+      for (let i = 0; i < 300 && !ok(); i++) await new Promise((r) => setTimeout(r, 10));
+      expect(ok()).toBe(true);
+    };
+    rv.start(50); // were it polling, it would poll every 50 ms
+    await until(() => streams.length === 1);
+    await new Promise((r) => setTimeout(r, 300));
+    const idle = polls;
+    expect(idle).toBeLessThanOrEqual(1); // the one look when the stream opened
+    const mb = mailbox(phone, laptop.publicKey);
+    const n = nonce();
+    await ntfy.publish(mb.topic, mb.seal({ t: "where", at: Date.now(), n }));
+    const answered = async () =>
+      (await ntfy.poll(mb.topic))
+        .map((m) => mb.open(m.message))
+        .some((m) => m?.t === "here" && m.n === n);
+    for (let i = 0; i < 100 && !(await answered()); i++)
+      await new Promise((r) => setTimeout(r, 10));
+    expect(await answered()).toBe(true);
+    // The stream ends (the server restarted): it polls meanwhile, then listens again.
+    streams.shift()?.res.end();
+    await until(() => streams.length === 1);
+    rv.stop();
+    for (const s of streams) s.res.end();
+    tunnel.stop();
+    server.closeAllConnections();
     server.close();
   });
 });

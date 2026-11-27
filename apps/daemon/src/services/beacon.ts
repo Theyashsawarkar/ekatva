@@ -3,7 +3,10 @@
  * encrypted UDP beacon per phone, broadcast on each real local network
  * (see @ekatva/link's beacon). Works with no internet at all, as on the
  * phone's own hotspot. Every few seconds while a paired phone isn't
- * connected directly; rarely otherwise.
+ * connected at all; every 15 s while each is connected, some through the
+ * tunnel (one on this network then moves over to it soon); rarely while all
+ * are connected directly. Each beacon is a broadcast that wakes every
+ * device on the network, the phone too.
  */
 import { createSocket, type Socket } from "node:dgram";
 import { networkInterfaces } from "node:os";
@@ -39,13 +42,15 @@ export class BeaconSender {
 
   constructor(
     private readonly me: KeyPair,
-    /** Paired phones, and whether each is already connected directly. */
-    private readonly devices: () => { key: string; direct: boolean }[],
+    /** Paired phones, and whether each is connected (at all, and directly). */
+    private readonly devices: () => { key: string; direct: boolean; connected?: boolean }[],
     private readonly port: () => number,
     private readonly opts: {
       everyMs?: number;
       /** While every phone is connected directly, send once per this many ticks. */
       quietEvery?: number;
+      /** While every phone is connected, some through the tunnel: once per this many. */
+      connectedEvery?: number;
       targets?: () => string[];
       beaconPort?: number;
       log?: (m: string) => void;
@@ -76,9 +81,13 @@ export class BeaconSender {
     const s = this.socket;
     if (!s) return;
     const devices = this.devices();
-    const quiet = devices.every((d) => d.direct);
-    if (quiet && this.ticks++ % (this.opts.quietEvery ?? 20) !== 0) return;
-    if (!quiet) this.ticks = 0;
+    const every = devices.every((d) => d.direct)
+      ? (this.opts.quietEvery ?? 20)
+      : devices.every((d) => d.connected)
+        ? (this.opts.connectedEvery ?? 5)
+        : 1;
+    if (every > 1 && this.ticks++ % every !== 0) return;
+    if (every === 1) this.ticks = 0;
     const targets = (this.opts.targets ?? broadcastTargets)();
     for (const d of devices) {
       let key = this.keys.get(d.key);

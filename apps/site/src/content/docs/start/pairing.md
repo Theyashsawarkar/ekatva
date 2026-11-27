@@ -47,7 +47,8 @@ When the phone and the laptop share a network (a Wi-Fi, or the laptop on the
 phone's own hotspot), they talk directly, with no internet needed and nothing
 in between:
 
-- Every 3 seconds, while a paired phone isn't connected directly, the laptop
+- Every 3 seconds while a paired phone isn't connected at all (every 15
+  seconds while each one is, some through the tunnel), the laptop
   broadcasts a **beacon** on each local network: 38 bytes on UDP port 47101,
   one per paired phone, encrypted with a key only that pair can compute. It
   carries the time and the laptop's port, nothing else: no name, no key, and
@@ -58,7 +59,8 @@ in between:
   the Noise handshake against the laptop's key anyway: a beacon only says
   where to knock.
 - Connected through the tunnel and then you come home? As soon as the phone
-  hears the beacon it opens the direct link and drops the tunnel.
+  hears the beacon (within 15 seconds) it opens the direct link and drops
+  the tunnel.
 - Containers' and VPNs' interfaces (`docker0`, `br-…`, `tailscale0`…) get no
   beacons and aren't offered to the phone.
 
@@ -115,7 +117,10 @@ The phone learns the tunnel's address three ways, so it's never stuck:
   tunnel's URL changes (a laptop restart, a dropped tunnel), the laptop posts
   the new one there, and a phone that can't reach the old address reads it
   and connects. If there's nothing new it asks "where are you?" and the
-  laptop answers.
+  laptop answers at once: it keeps one quiet connection open to the
+  mailbox (ntfy says something every 45 seconds) and reads it the moment
+  anything is posted, instead of looking every 10 seconds (it still does,
+  while that connection can't be opened).
 
 **After a restart.** The laptop reconnects by itself once you've logged in.
 The phone's keys stay locked until your fingerprint opens them, so after the

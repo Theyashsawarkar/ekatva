@@ -4,6 +4,15 @@
  * mailbox (see @ekatva/link's rendezvous). And, unasked, post the new
  * address whenever the tunnel's URL changes, so a phone away finds it at
  * its next look without waiting for an answer.
+ *
+ * Listening: one long-lived ntfy stream over every phone's mailbox rings a
+ * bell when anything is posted, and the mailboxes are then read (as a poll
+ * would). It costs one keepalive from the server every 45 s instead of an
+ * HTTPS request every 10 s, and a phone's question is answered at once. A
+ * stream silent for over a minute (a network that went away under it) is
+ * dropped and opened again, and each opening reads the mailboxes, so
+ * nothing posted meanwhile is missed. While it can't be opened, the
+ * mailboxes are polled every 10 s, as before.
  */
 import { ANNOUNCE, fromB64u, type KeyPair, mailbox, Ntfy } from "@ekatva/link";
 import type { Tunnel } from "./tunnel.js";
@@ -24,16 +33,125 @@ export class Rendezvous {
   ) {}
 
   private failing = false;
+  private running = false;
+  private everyMs = 10_000;
+  private abort: AbortController | null = null;
+  private topics = "";
+  private retry: ReturnType<typeof setTimeout> | null = null;
+  private retryMs = 1000;
+  private safety: ReturnType<typeof setInterval> | null = null;
+  private streamFailing = false;
 
-  start(everyMs = 10_000): void {
-    if (this.timer) return;
-    void this.check();
-    this.timer = setInterval(() => void this.check(), everyMs);
+  /** Silence longer than this on the stream means it's dead (ntfy says something every 45 s). */
+  static SILENT_MS = 60_000;
+  /** A look now and then even while the stream is up, in case it lost something. */
+  static SAFETY_MS = 10 * 60_000;
+
+  /**
+   * Listens on the mailboxes (`stream` false: polls every `everyMs`, as
+   * before the stream).
+   */
+  start(everyMs = 10_000, stream = true): void {
+    if (this.running) return;
+    this.running = true;
+    this.everyMs = everyMs;
+    if (!stream) {
+      void this.check();
+      this.poll(true);
+      return;
+    }
+    this.safety = setInterval(() => void this.check(), Rendezvous.SAFETY_MS);
+    this.safety.unref?.();
+    this.listen();
   }
 
   stop(): void {
-    if (this.timer) clearInterval(this.timer);
-    this.timer = null;
+    this.running = false;
+    this.poll(false);
+    if (this.safety) clearInterval(this.safety);
+    this.safety = null;
+    if (this.retry) clearTimeout(this.retry);
+    this.retry = null;
+    this.abort?.abort();
+    this.abort = null;
+  }
+
+  /** The paired phones changed: listen on the new set of mailboxes. */
+  refresh(): void {
+    if (!this.running || !this.safety) return;
+    if (this.topicList().join(",") !== this.topics) this.abort?.abort();
+  }
+
+  private poll(on: boolean): void {
+    if (on && !this.timer) this.timer = setInterval(() => void this.check(), this.everyMs);
+    if (!on && this.timer) {
+      clearInterval(this.timer);
+      this.timer = null;
+    }
+  }
+
+  private topicList(): string[] {
+    return this.devices().map((d) => mailbox(this.me, fromB64u(d.key)).topic);
+  }
+
+  private listen(): void {
+    if (!this.running) return;
+    const topics = this.topicList();
+    this.topics = topics.join(",");
+    if (topics.length === 0) {
+      // Nothing paired yet: look again later (refresh() comes sooner).
+      this.again(60_000);
+      return;
+    }
+    const abort = new AbortController();
+    this.abort = abort;
+    let silent: ReturnType<typeof setTimeout> | null = null;
+    const heard = () => {
+      if (silent) clearTimeout(silent);
+      silent = setTimeout(() => abort.abort(), Rendezvous.SILENT_MS);
+      silent.unref?.();
+    };
+    heard();
+    let opened = false;
+    this.ntfy
+      .stream(
+        topics,
+        (event) => {
+          heard();
+          if (event === "open") {
+            opened = true;
+            this.streamFailing = false;
+            this.retryMs = 1000;
+            this.poll(false);
+            void this.check();
+          } else if (event === "message") void this.check();
+        },
+        abort.signal,
+      )
+      .catch((e) => {
+        if (!abort.signal.aborted && !this.failing && !this.streamFailing)
+          this.log(`can't listen at the rendezvous (polling instead): ${(e as Error).message}`);
+        if (!abort.signal.aborted) this.streamFailing = true;
+      })
+      .finally(() => {
+        if (silent) clearTimeout(silent);
+        if (this.abort === abort) this.abort = null;
+        if (!this.running) return;
+        // Down: poll meanwhile, and open it again (soon if it had been up).
+        this.poll(true);
+        if (!opened) void this.check();
+        this.again(opened ? 1000 : this.retryMs);
+        if (!opened) this.retryMs = Math.min(this.retryMs * 2, 60_000);
+      });
+  }
+
+  private again(ms: number): void {
+    if (this.retry) clearTimeout(this.retry);
+    this.retry = setTimeout(() => {
+      this.retry = null;
+      this.listen();
+    }, ms);
+    this.retry.unref?.();
   }
 
   /** Posts where the laptop is now to every paired phone's mailbox (or one phone's). */
