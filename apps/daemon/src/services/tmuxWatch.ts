@@ -111,6 +111,14 @@ export class TmuxWatch {
       "-f",
       "ignore-size,no-output",
       "exec sleep infinity",
+      // In the same command, so it's set before anything else can run:
+      // tmux destroys the session when this client leaves.
+      ";",
+      "set-option",
+      "-t",
+      WATCH_SESSION,
+      "destroy-unattached",
+      "on",
     ];
     const child = new LineChild({
       cmd: "tmux",
@@ -118,8 +126,6 @@ export class TmuxWatch {
       ...(this.o.spawn ? { spawn: this.o.spawn } : {}),
       respawn: false,
       onStart: () => {
-        // The client's own session: tmux destroys it when this client leaves.
-        child.write("set-option destroy-unattached on");
         child.write(`refresh-client -B 'ekatva-panes::${PANES_FORMAT}'`);
       },
       onLine: (line) => {

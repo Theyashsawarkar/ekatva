@@ -5,7 +5,12 @@ import { join } from "node:path";
 import type { AgentSession } from "@ekatva/protocol";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { type AgentEvents, AgentsService, tmuxOn } from "../src/services/agents.js";
-import { PANES_FORMAT, TmuxWatch, WATCH_SESSION } from "../src/services/tmuxWatch.js";
+import {
+  PANES_FORMAT,
+  TmuxWatch,
+  tmuxSocketPath,
+  WATCH_SESSION,
+} from "../src/services/tmuxWatch.js";
 import { fakeSpawn, until } from "./fakeChild.js";
 
 describe("tmux's control mode, from fixture output", () => {
@@ -26,9 +31,16 @@ describe("tmux's control mode, from fixture output", () => {
     const p = spawn.procs[0];
     expect(p?.args).toContain("-N"); // never starts a server
     expect(p?.args).toContain(WATCH_SESSION);
-    await until(() => (p?.input.length ?? 0) >= 2);
-    expect(p?.input[0]).toMatch(/destroy-unattached on/);
-    expect(p?.input[1]).toBe(`refresh-client -B 'ekatva-panes::${PANES_FORMAT}'`);
+    expect(p?.args.slice(-6)).toEqual([
+      ";",
+      "set-option",
+      "-t",
+      WATCH_SESSION,
+      "destroy-unattached",
+      "on",
+    ]);
+    await until(() => (p?.input.length ?? 0) >= 1);
+    expect(p?.input[0]).toBe(`refresh-client -B 'ekatva-panes::${PANES_FORMAT}'`);
     p?.say(
       "%begin 1 1 0",
       "%end 1 1 0",
@@ -124,6 +136,8 @@ afterAll(async () => {
   try {
     tmuxQ(["kill-server"]);
   } catch {}
+  // tmux leaves its socket behind.
+  await fs.rm(tmuxSocketPath(socket), { force: true });
   await fs.rm(dir, { recursive: true, force: true, maxRetries: 10, retryDelay: 100 });
 });
 
@@ -165,6 +179,11 @@ describe("agents told by a real (private) tmux", () => {
     tmuxQ(["new-window", "-t", "again", join(dir, "bin/claude"), "300"]);
     await until(() => (seen.at(-1)?.length ?? 0) === 1, 15_000);
     expect(seen.at(-1)?.[0]?.session).toBe("again");
+    // Set on the new server's session too, before anything else ran.
+    await until(() => tmuxQ(["list-sessions", "-F", "#{session_name}"]).includes(WATCH_SESSION));
+    expect(tmuxQ(["show-options", "-t", WATCH_SESSION, "-v", "destroy-unattached"]).trim()).toBe(
+      "on",
+    );
 
     ac.abort();
     await reading;
