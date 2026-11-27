@@ -3,11 +3,21 @@
  * (nāda, drishya, browsers, mpv) through playerctl, the volume through
  * wpctl (PipeWire), the backlight through brightnessctl. Missing tools just
  * leave their part empty.
+ *
+ * While watched, the volume and the backlight come from Vyom's live state
+ * when Vyom runs (vyom/live.py already follows the sound server and the
+ * backlight for the desktop): its `PropertiesChanged` on
+ * /dev/vayu/Vyom/State reaches the same dbus-monitor that follows the
+ * players, and its state files are read then, so no `pactl subscribe` or
+ * `udevadm monitor` of our own runs and a change costs no wpctl or
+ * brightnessctl. Without Vyom (or with one older than its `sink` field)
+ * they're followed here as before.
  */
 
 import { execFile } from "node:child_process";
 import { createHash } from "node:crypto";
 import { readFile, stat } from "node:fs/promises";
+import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 import type { Done, Media, MediaAction, Player } from "@ekatva/protocol";
 import { TRPCError } from "@trpc/server";
@@ -35,7 +45,80 @@ export interface MediaHost {
    * polls every 1.5 s.
    */
   spawn?: Spawn;
+  /** Vyom's live state (the volume and the backlight), when Vyom runs. */
+  vyom?: VyomState;
 }
+
+/** What Vyom publishes that the media panel shows. */
+export interface VyomView {
+  volume: Media["volume"];
+  brightness: number | null;
+}
+
+export interface VyomState {
+  /** Whether Vyom is on the session bus now. */
+  running(): Promise<boolean>;
+  /** Its volume and backlight, or null when they can't be used (none, or an older Vyom). */
+  read(): Promise<VyomView | null>;
+}
+
+/** Where Vyom's live state signals (ADR 12 in Vyom). */
+export const VYOM_STATE_PATH = "/dev/vayu/Vyom/State";
+
+/**
+ * Vyom's state files (`volume.json`, `brightness.json`) as the phone shows
+ * them. Null when the volume has no `sink` field: no sound followed, or a
+ * Vyom from before it published at once (it then held changes up to 250 ms).
+ */
+export function vyomView(volume: unknown, brightness: unknown): VyomView | null {
+  if (!volume || typeof volume !== "object" || !("sink" in volume)) return null;
+  const v = volume as { sink?: unknown; volume?: unknown; muted?: unknown };
+  const b = (brightness ?? null) as { brightness?: unknown; max?: unknown } | null;
+  const max = Number(b?.max);
+  return {
+    volume:
+      v.sink && Number.isFinite(Number(v.volume))
+        ? { percent: Math.round(Number(v.volume)), muted: Boolean(v.muted) }
+        : null,
+    // brightnessctl's percent: rounded, half up
+    brightness: b && max > 0 ? Math.round((Number(b.brightness) * 100) / max) : null,
+  };
+}
+
+const realVyom: VyomState = {
+  running: () =>
+    new Promise((resolve) => {
+      execFile(
+        "gdbus",
+        [
+          "call",
+          "--session",
+          "--dest",
+          "org.freedesktop.DBus",
+          "--object-path",
+          "/org/freedesktop/DBus",
+          "--method",
+          "org.freedesktop.DBus.NameHasOwner",
+          "dev.vayu.Vyom",
+        ],
+        { timeout: 2_000 },
+        (err, stdout) => resolve(!err && /true/.test(String(stdout))),
+      );
+    }),
+  read: async () => {
+    const dir = process.env.XDG_RUNTIME_DIR;
+    if (!dir) return null;
+    const json = async (name: string) => {
+      try {
+        return JSON.parse(await readFile(join(dir, "vayu", "state", `${name}.json`), "utf8"));
+      } catch {
+        return null;
+      }
+    };
+    const [volume, brightness] = await Promise.all([json("volume"), json("brightness")]);
+    return vyomView(volume, brightness);
+  },
+};
 
 type Part = "players" | "volume" | "brightness";
 const PARTS: readonly Part[] = ["players", "volume", "brightness"];
@@ -52,6 +135,9 @@ const DBUS_ARGS = [
   "type='signal',interface='org.freedesktop.DBus.Properties',member='PropertiesChanged',path='/org/mpris/MediaPlayer2'",
   "type='signal',interface='org.mpris.MediaPlayer2.Player',member='Seeked',path='/org/mpris/MediaPlayer2'",
   "type='signal',sender='org.freedesktop.DBus',interface='org.freedesktop.DBus',member='NameOwnerChanged',arg0namespace='org.mpris.MediaPlayer2'",
+  // Vyom's live state changing, and Vyom coming or going
+  `type='signal',interface='org.freedesktop.DBus.Properties',member='PropertiesChanged',path='${VYOM_STATE_PATH}'`,
+  "type='signal',sender='org.freedesktop.DBus',interface='org.freedesktop.DBus',member='NameOwnerChanged',arg0='dev.vayu.Vyom'",
 ];
 
 /** Players whose queue is MPD's. */
@@ -84,6 +170,7 @@ export const realMediaHost: MediaHost = {
   now: () => Date.now(),
   queue: () => mpdQueue().catch(() => null),
   spawn: realSpawn,
+  vyom: realVyom,
   // ffmpeg reads files and https alike; 192 px wide is plenty for a 64 dp label at 3x.
   cover: (source) =>
     new Promise((resolve) => {
@@ -182,6 +269,12 @@ export class MediaService {
   private forced = false;
   private flushing: Promise<void> | null = null;
   private kick = debounce(() => void this.flush().catch(() => undefined), 100);
+  /** The volume and the backlight come from Vyom's state right now (not our own watchers). */
+  private viaVyom = false;
+  /** What was there when watching started: the parts our own watchers follow. */
+  private first: Media | null = null;
+  private checking: Promise<void> | null = null;
+  private recheck = false;
 
   constructor(
     private readonly host: MediaHost = realMediaHost,
@@ -422,10 +515,23 @@ export class MediaService {
       const m: Media = this.current
         ? { ...this.current }
         : { players: [], volume: null, brightness: null };
+      // Vyom's state when it's followed (two small files, no command), except
+      // after a change of ours: then straight from the source.
+      const vyom =
+        this.viaVyom && !force && (parts.includes("volume") || parts.includes("brightness"))
+          ? await this.host.vyom?.read().catch(() => null)
+          : undefined;
+      if (vyom === null) this.checkVyom(); // it stopped publishing them: follow them here
+      if (vyom) {
+        if (parts.includes("volume")) m.volume = vyom.volume;
+        if (parts.includes("brightness")) m.brightness = vyom.brightness;
+      }
       await Promise.all([
         parts.includes("players") ? this.players().then((v) => (m.players = v)) : null,
-        parts.includes("volume") ? this.volumeNow().then((v) => (m.volume = v)) : null,
-        parts.includes("brightness") ? this.brightnessNow().then((v) => (m.brightness = v)) : null,
+        parts.includes("volume") && !vyom ? this.volumeNow().then((v) => (m.volume = v)) : null,
+        parts.includes("brightness") && !vyom
+          ? this.brightnessNow().then((v) => (m.brightness = v))
+          : null,
       ]);
       this.current = m;
       const shape = MediaService.shape(m);
@@ -475,55 +581,121 @@ export class MediaService {
     }
   }
 
-  /** Starts the event sources: MPRIS signals, PipeWire's (pulse) events, backlight uevents. */
-  private watch(first: Media): void {
+  /** Starts an event source for a part (a long-lived helper read line by line). */
+  private source(part: Part, cmd: string, args: string[], seen: (line: string) => void): void {
     const spawn = this.host.spawn;
-    if (spawn) {
-      const source = (part: Part, cmd: string, args: string[], seen: (line: string) => void) => {
-        const child = new LineChild({
-          cmd,
-          args,
-          spawn,
-          onLine: seen,
-          onStart: () => {
-            this.live.add(part);
-            this.planPoll();
-          },
-          onExit: () => {
-            // Whatever changed while it was gone.
-            this.live.delete(part);
-            this.mark([part]);
-            this.planPoll();
-          },
-          onDown: () => {
-            this.live.delete(part);
-            this.sources.delete(part);
-            this.planPoll();
-          },
-        });
-        this.sources.set(part, child);
-        child.start();
-      };
-      source("players", "dbus-monitor", DBUS_ARGS, (line) => {
-        const member = line.split("\t")[7];
-        if (member === "Seeked") this.mark(["players"], true);
-        else if (member === "PropertiesChanged" || member === "NameOwnerChanged")
-          this.mark(["players"]);
+    if (!spawn || this.sources.has(part)) return;
+    const child = new LineChild({
+      cmd,
+      args,
+      spawn,
+      onLine: seen,
+      onStart: () => {
+        this.live.add(part);
+        this.planPoll();
+        if (part === "players") this.checkVyom(); // Vyom's signals come through this one
+      },
+      onExit: () => {
+        // Whatever changed while it was gone (Vyom's signals come through the players' one).
+        this.live.delete(part);
+        this.mark(part === "players" && this.viaVyom ? PARTS : [part]);
+        this.planPoll();
+      },
+      onDown: () => {
+        this.live.delete(part);
+        this.sources.delete(part);
+        if (part === "players") this.checkVyom();
+        this.planPoll();
+      },
+    });
+    this.sources.set(part, child);
+    child.start();
+  }
+
+  /** Our own watchers of the volume and the backlight (without Vyom). */
+  private ownSources(): void {
+    const first = this.first;
+    if (!first || !this.listeners.size) return;
+    if (first.volume)
+      this.source("volume", "pactl", ["subscribe"], (line) => {
+        if (/^Event '(new|change|remove)' on (sink|server)( #|$)/.test(line)) this.mark(["volume"]);
       });
-      if (first.volume)
-        source("volume", "pactl", ["subscribe"], (line) => {
-          if (/^Event '(new|change|remove)' on (sink|server)( #|$)/.test(line))
-            this.mark(["volume"]);
-        });
-      if (first.brightness !== null)
-        source(
-          "brightness",
-          "udevadm",
-          ["monitor", "--udev", "--subsystem-match=backlight"],
-          (line) => {
-            if (/^(UDEV|KERNEL)\s*\[.*\bchange\b/.test(line)) this.mark(["brightness"]);
-          },
-        );
+    if (first.brightness !== null)
+      this.source(
+        "brightness",
+        "udevadm",
+        ["monitor", "--udev", "--subsystem-match=backlight"],
+        (line) => {
+          if (/^(UDEV|KERNEL)\s*\[.*\bchange\b/.test(line)) this.mark(["brightness"]);
+        },
+      );
+  }
+
+  /**
+   * Follows the volume and the backlight through Vyom's state when Vyom runs
+   * and publishes them (and the players' dbus-monitor, which carries its
+   * signals, is up), else with our own watchers. Asked again when Vyom (or a
+   * player) comes or goes, and when Vyom's state stops being usable.
+   */
+  private checkVyom(): void {
+    if (this.checking) {
+      this.recheck = true;
+      return;
+    }
+    const vyom = this.host.vyom;
+    this.checking = (async () => {
+      const usable =
+        !!vyom &&
+        this.live.has("players") &&
+        (await vyom.running().catch(() => false)) &&
+        (await vyom.read().catch(() => null)) !== null;
+      if (!this.listeners.size) return;
+      if (usable && !this.viaVyom) {
+        this.viaVyom = true;
+        for (const part of ["volume", "brightness"] as const) {
+          this.sources.get(part)?.stop();
+          this.sources.delete(part);
+          this.live.add(part);
+        }
+        this.mark(["volume", "brightness"]);
+      } else if (!usable) {
+        if (this.viaVyom) {
+          this.viaVyom = false;
+          this.live.delete("volume");
+          this.live.delete("brightness");
+          this.mark(["volume", "brightness"]);
+        }
+        this.ownSources();
+      }
+      this.planPoll();
+    })().finally(() => {
+      this.checking = null;
+      if (this.recheck) {
+        this.recheck = false;
+        this.checkVyom();
+      }
+    });
+  }
+
+  /** Starts the event sources: MPRIS signals (and Vyom's), then the volume's and the backlight's. */
+  private watch(first: Media): void {
+    this.first = first;
+    if (this.host.spawn) {
+      this.source("players", "dbus-monitor", DBUS_ARGS, (line) => {
+        const f = line.split("\t");
+        const member = f[7];
+        if (f[5] === VYOM_STATE_PATH) {
+          if (this.viaVyom) this.mark(["volume", "brightness"]);
+          else this.checkVyom(); // a Vyom (re)started: it publishes everything fresh
+        } else if (member === "Seeked") this.mark(["players"], true);
+        else if (member === "NameOwnerChanged") {
+          this.mark(["players"]);
+          if (this.host.vyom) this.checkVyom(); // a player's, or Vyom coming or going
+        } else if (member === "PropertiesChanged") this.mark(["players"]);
+      });
+      // Without a way to follow Vyom, our own at once; else checkVyom (when
+      // dbus-monitor is up) picks one or the other.
+      if (!this.host.vyom) this.ownSources();
       this.safety = setInterval(() => this.mark(PARTS), SAFETY_MS);
       this.safety.unref?.();
     }
@@ -541,12 +713,20 @@ export class MediaService {
     this.timer = null;
     this.safety = null;
     this.current = null;
+    this.first = null;
+    this.viaVyom = false;
   }
 
   /** How each part is watched right now (for tests). */
-  get watching(): Record<Part, "events" | "polling" | "idle"> {
+  get watching(): Record<Part, "events" | "vyom" | "polling" | "idle"> {
     const of = (p: Part) =>
-      this.live.has(p) ? "events" : this.timer && this.needsPoll(p) ? "polling" : "idle";
+      this.viaVyom && p !== "players"
+        ? "vyom"
+        : this.live.has(p)
+          ? "events"
+          : this.timer && this.needsPoll(p)
+            ? "polling"
+            : "idle";
     return { players: of("players"), volume: of("volume"), brightness: of("brightness") };
   }
 

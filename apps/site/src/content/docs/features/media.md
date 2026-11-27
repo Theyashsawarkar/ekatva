@@ -48,4 +48,13 @@ is sent at once. Everything is read again every 30 s in case a signal was
 missed. When one of those tools is missing, its part is looked at every
 1.5 s instead, as before.
 
+With [Vyom](https://github.com/Theyashsawarkar/vyom) running (Vayu's
+panels), the volume and the backlight come from the live state it keeps
+for the desktop anyway: its `PropertiesChanged` on `/dev/vayu/Vyom/State`
+reaches the same `dbus-monitor`, and its two small state files are read
+then, so neither `pactl subscribe` nor `udevadm monitor` runs, and a change
+costs no `wpctl` or `brightnessctl`. When Vyom stops (or is an older
+one, whose volume state has no `sink`), the laptop follows them itself
+again.
+
 Coming: nāda's queue and search from the phone.
