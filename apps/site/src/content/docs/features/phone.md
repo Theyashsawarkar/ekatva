@@ -16,6 +16,11 @@ once, in the app's **Settings → Phone features**.
 - **Notifications**: the phone's, on your desktop; dismiss on one, gone on both.
 - **Lock the phone**, ring it to find it, keep its screen on.
 - **Its files** and **its clipboard**, with the same undo as the laptop's.
+  With **one clipboard** on, what you copy on the laptop reaches the phone as
+  you copy it: the compositor wakes ekatva (`wl-paste --watch`), only while
+  sync is on and a phone is connected, so nothing is asked every 1.5 s
+  (without `wl-paste` or a Wayland display in the service, it asks every
+  1.5 s, as before). What came from the phone isn't sent back.
 
 Calls, SMS, the notification listener, locking and staying connected use
 Android APIs JavaScript can't reach: one small native module

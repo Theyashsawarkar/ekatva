@@ -37,4 +37,15 @@ volume, `brightnessctl` for the backlight. Whatever isn't installed just
 doesn't show. Local cover art (nāda's cache) travels as a small image, up
 to 256 KB; web covers as their URL.
 
+While a phone watches, the laptop is told about changes instead of asking
+for them: `dbus-monitor` passes on the players' own D-Bus signals (play,
+pause, a new track, a seek, a player opening or closing), `pactl subscribe`
+the volume's, and `udevadm monitor` the backlight's. A burst of signals is
+one look (after 100 ms), and nothing runs while nothing changes. A playing
+track's position isn't signalled by players: the phone moves it on by
+itself from the position and time it was given, and a seek on the laptop
+is sent at once. Everything is read again every 30 s in case a signal was
+missed. When one of those tools is missing, its part is looked at every
+1.5 s instead, as before.
+
 Coming: nāda's queue and search from the phone.

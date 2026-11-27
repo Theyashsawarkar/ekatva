@@ -54,3 +54,21 @@ leaves.
 ```sh
 ekatva agents
 ```
+
+## How it stays live
+
+While a phone (or the laptop's window) watches the list, tmux says when it
+changes instead of being asked every 1.5 s: ekatva keeps a tmux control
+client in a small session of its own, **`ekatva-watch`**, and subscribes
+to the panes that run an agent (their title, folder, window, Claude's
+waiting mark, and when their window last printed something). tmux checks
+that once a second and writes only when it changed; Claude's own records
+(its sessions and transcripts) are watched as files. Changes are looked at
+together, at most once a second; nothing runs while nothing changes.
+
+`ekatva-watch` runs only `sleep`, is left out of every list ekatva shows,
+and tmux removes it as soon as nobody watches (it may show for that time
+in tmux's own session list). It never starts a tmux server: with none
+running it waits for one to appear. Nothing in your tmux config changes.
+With a tmux too old for control-mode subscriptions (before 3.2), the list
+is looked at every 1.5 s, as before.

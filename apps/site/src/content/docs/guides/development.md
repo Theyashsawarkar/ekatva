@@ -37,6 +37,11 @@ a client of the daemon's socket, like the CLI.
 - Tests never touch your real screen, speakers, keyring or tmux sessions: the
   daemon's tests use a private tmux server (`tmux -L`), scratch homes and fake
   system hosts.
+- The real event sources (`wl-paste --watch`, MPRIS signals through
+  `dbus-monitor`) are tested in a private session: `pnpm --filter
+  @ekatva/daemon test:session` starts its own D-Bus (`dbus-run-session`), its
+  own `XDG_RUNTIME_DIR` and a headless sway, with a made-up MPRIS player
+  (`test/session/fakeplayer.py`). Plain `pnpm test` skips them.
 
 ## The phone app's release build
 

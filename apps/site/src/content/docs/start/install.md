@@ -19,7 +19,10 @@ older than the TypeScript build) the `ekatva` launcher runs the TypeScript CLI.
 PATH, it carries each agent's MCP session into the daemon instead of a Node
 process per session.
 `wl-clipboard` gives clipboard sync, `libsecret` (`secret-tool`) keeps the
-identity key in your desktop keyring.
+identity key in your desktop keyring. `dbus-monitor` (dbus), `pactl`
+(libpulse) and `udevadm` (systemd) let the daemon be told when media,
+volume and brightness change instead of asking every 1.5 s; without them it
+asks, as before.
 
 ```sh
 git clone https://github.com/Theyashsawarkar/ekatva
