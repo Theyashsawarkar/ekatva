@@ -86,7 +86,7 @@ import { type AppearanceHost, AppearanceService } from "./services/appearance.js
 import { AppsService } from "./services/apps.js";
 import { BeaconSender, VIRTUAL } from "./services/beacon.js";
 import { CallState } from "./services/calls.js";
-import { ClipboardSync } from "./services/clipboardSync.js";
+import { type ClipboardEvents, ClipboardSync, wlPasteEvents } from "./services/clipboardSync.js";
 import { DesktopNotifications } from "./services/desktopNotifications.js";
 import { LaptopFiles } from "./services/files.js";
 import { type FirewallProblem, firewallProblem } from "./services/firewall.js";
@@ -168,6 +168,8 @@ export interface DaemonOptions {
   appearanceHost?: AppearanceHost;
   mediaHost?: MediaHost;
   tmux?: Tmux;
+  /** The clipboard's change events (default `wl-paste --watch`); null polls. */
+  clipboardEvents?: ClipboardEvents | null;
   log?: (msg: string) => void;
   /** The addresses phones are told (default: this machine's IPv4 addresses). */
   lan?: (port: number) => string[];
@@ -322,6 +324,8 @@ export class Daemon {
         );
       },
       () => this.peers.size > 0,
+      1500,
+      o.clipboardEvents === undefined ? wlPasteEvents() : o.clipboardEvents,
     );
     this.share = new ShareInbox(
       o.shareHost ?? {
@@ -518,6 +522,7 @@ export class Daemon {
     for (const t of this.timers) clearInterval(t);
     for (const p of this.peers.values()) p.close("the laptop's service stopped");
     this.peers.clear();
+    this.clipSync.update();
     for (const p of this.pendings.values()) p.decide({ ok: false, reason: "the laptop stopped" });
     this.beacon?.stop();
     this.clipSync.stop();
@@ -730,6 +735,7 @@ export class Daemon {
     };
     const peer: Peer = { key, channel, phone, close, via };
     this.peers.set(key, peer);
+    this.clipSync.update();
     if (via === "tunnel") {
       this.tunnel.touch();
       const keep = setInterval(() => this.tunnel.touch(), 60_000);
@@ -739,6 +745,7 @@ export class Daemon {
     this.log(`${device.name} connected (${via})`);
     channel.onClose((reason) => {
       if (this.peers.get(key) === peer) this.peers.delete(key);
+      this.clipSync.update();
       follow?.unsubscribe();
       stopServing();
       void wsClient.close();
