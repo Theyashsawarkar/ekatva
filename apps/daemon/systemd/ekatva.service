@@ -8,6 +8,9 @@ StartLimitIntervalSec=0
 
 [Service]
 ExecStart=%h/.local/bin/ekatva daemon
+# Take agents' MCP socket from systemd even when started at login, not by a
+# connection (and start the socket first), so the daemon never binds it itself.
+Sockets=ekatva-mcp.socket
 Restart=on-failure
 RestartSec=3
 RestartSteps=5
