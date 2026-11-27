@@ -1,6 +1,6 @@
 {
   "name": "@ekatva/app",
-  "version": "0.1.1",
+  "version": "0.2.0",
   "private": true,
   "description": "For a laptop app to talk to phone apps through ekatva: register, answer calls, take events, reach the phone.",
   "type": "module",

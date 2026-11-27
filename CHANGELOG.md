@@ -2,7 +2,7 @@
 
 Newest first. Releases are tags (`vX.Y.Z`); every package's `version` moves together.
 
-## Unreleased
+## v0.2.0 -- 2026-11-27
 
 - **Agents' MCP sessions through pranali.** `ekatva mcp` is now `pranali ekatva --agent "$EKATVA_AGENT" --fallback <the TypeScript server>` when [pranali](https://github.com/Theyashsawarkar/pranali) is on your PATH (else the Node server, as before); `ekatva-rs mcp` is gone, and with it the bug where it replayed queued calls before the session was set up again. The daemon speaks pranali's hello on its MCP socket (`{"pranali":1,"agent":…,"env":…}`, answered `{"pranali":1,"ok":true}`) and still takes the old `{"agent":…}` line for one release, so pipes in running sessions keep working.
   - **Approvals open on the agent's screen**: `sms_send` and `call_dial` ask with the session's `DISPLAY`, `WAYLAND_DISPLAY` and `XAUTHORITY` from its hello, not the service's (they were silently declined when sway's environment hadn't reached systemd yet).

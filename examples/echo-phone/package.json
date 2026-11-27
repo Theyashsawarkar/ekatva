@@ -1,6 +1,6 @@
 {
   "name": "ekatva-echo-phone",
-  "version": "0.1.1",
+  "version": "0.2.0",
   "private": true,
   "description": "The smallest phone app on ekatva: talks to examples/echo on the laptop, through ekatva.",
   "main": "index.js",
