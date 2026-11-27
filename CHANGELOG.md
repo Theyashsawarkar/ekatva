@@ -4,6 +4,7 @@ Newest first. Releases are tags (`vX.Y.Z`); every package's `version` moves toge
 
 ## Unreleased
 
+- Fixed: the agents' tmux watch could miss a tmux server that restarted, on filesystems that give a new socket the old one's inode number (ext4, xfs): the socket is now told apart by its inode and change time.
 - **Fewer wakeups while nothing happens.** Measured on the laptop it was made on (2 cores), idle:
   - **The tunnel speaks HTTP/2, not QUIC** (`cloudflared tunnel --protocol http2`, quick and named tunnels alike). Idle, QUIC woke cloudflared ~44 times a second per edge connection (a named tunnel holds 4: ~106 wakeups/s and 2 ms of CPU a second, all day); HTTP/2 over TCP idles at ~2 per connection (throwaway quick tunnels against a local server, 90 s each; `GOMAXPROCS=1` saved one more wakeup a second, not worth a busy tunnel's second core). The phone's WebSocket goes through it the same way.
   - **The mailboxes are listened to, not polled**: one long-lived ntfy stream over every paired phone's mailbox (`Ntfy.stream` in `@ekatva/link`) rings when anything is posted, and the mailboxes are read then, so a phone's "where are you?" is answered at once instead of within 10 s, for one keepalive from ntfy every 45 s instead of an HTTPS request every 10 s. A stream silent for a minute is dropped and opened again; each opening reads the mailboxes, so nothing posted meanwhile is missed; while it can't be opened, it polls every 10 s as before, and it looks anyway every 10 minutes. Pairing or unpairing a phone listens on the new set at once.
