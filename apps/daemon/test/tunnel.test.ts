@@ -377,9 +377,10 @@ describe("rendezvous on the laptop", () => {
       10,
       fakeSpawner(["https://calm-sea.trycloudflare.com"], []),
     );
+    let paired: { key: string; name: string }[] = [];
     const rv = new Rendezvous(
       laptop,
-      () => [{ key: Buffer.from(phone.publicKey).toString("base64url"), name: "Pixel 8" }],
+      () => paired,
       tunnel,
       () => [],
       ntfy,
@@ -389,6 +390,11 @@ describe("rendezvous on the laptop", () => {
       expect(ok()).toBe(true);
     };
     rv.start(50); // were it polling, it would poll every 50 ms
+    // Nothing paired yet: nothing to listen on. A phone pairs: it listens at once.
+    await new Promise((r) => setTimeout(r, 100));
+    expect(streams.length).toBe(0);
+    paired = [{ key: Buffer.from(phone.publicKey).toString("base64url"), name: "Pixel 8" }];
+    rv.refresh();
     await until(() => streams.length === 1);
     await new Promise((r) => setTimeout(r, 300));
     const idle = polls;

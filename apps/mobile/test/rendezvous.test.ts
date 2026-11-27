@@ -15,18 +15,36 @@ import type { DeviceApi } from "../src/core/services";
 import { type Platform, Session } from "../src/core/session";
 import { MemFs } from "./memfs";
 
-/** A tiny ntfy: POST stores, GET …/json lists. */
+/**
+ * A tiny ntfy: POST stores, GET …/json?poll=1 lists, and GET …/json (one
+ * topic or several, comma-separated) streams, as the real one: an "open"
+ * event, then a "message" event for each post to one of its topics.
+ */
 function fakeNtfy(): Promise<{ server: Server; url: string }> {
   const store: { id: string; topic: string; message: string }[] = [];
+  const streams = new Set<{ topics: string[]; res: import("node:http").ServerResponse }>();
   const server = createServer((req, res) => {
-    const [, topic, rest] = (req.url ?? "").split(/[/?]/);
+    const url = req.url ?? "";
+    const [, topic, rest] = url.split(/[/?]/);
     if (req.method === "POST") {
       let b = "";
       req.on("data", (d) => (b += d));
       req.on("end", () => {
-        store.push({ id: String(store.length + 1), topic: topic ?? "", message: b });
+        const m = { id: String(store.length + 1), topic: topic ?? "", message: b };
+        store.push(m);
         res.end("{}");
+        for (const s of streams)
+          if (s.topics.includes(m.topic))
+            s.res.write(
+              `${JSON.stringify({ id: m.id, event: "message", topic: m.topic, message: m.message })}\n`,
+            );
       });
+    } else if (rest === "json" && !url.includes("poll=1")) {
+      const s = { topics: (topic ?? "").split(","), res };
+      res.writeHead(200, { "content-type": "application/x-ndjson" });
+      res.write(`${JSON.stringify({ id: "0", event: "open", topic })}\n`);
+      streams.add(s);
+      req.on("close", () => streams.delete(s));
     } else if (rest === "json") {
       res.end(
         store
@@ -162,6 +180,7 @@ describe("finding the laptop from elsewhere", () => {
     phone.link.stop();
     ws.close();
     await daemon.stop();
+    ntfy.server.closeAllConnections();
     ntfy.server.close();
     await fs.rm(root, { recursive: true, force: true });
   });

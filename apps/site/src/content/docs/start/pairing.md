@@ -47,8 +47,7 @@ When the phone and the laptop share a network (a Wi-Fi, or the laptop on the
 phone's own hotspot), they talk directly, with no internet needed and nothing
 in between:
 
-- Every 3 seconds while a paired phone isn't connected at all (every 15
-  seconds while each one is, some through the tunnel), the laptop
+- Every 3 seconds, while a paired phone isn't connected directly, the laptop
   broadcasts a **beacon** on each local network: 38 bytes on UDP port 47101,
   one per paired phone, encrypted with a key only that pair can compute. It
   carries the time and the laptop's port, nothing else: no name, no key, and
@@ -59,8 +58,7 @@ in between:
   the Noise handshake against the laptop's key anyway: a beacon only says
   where to knock.
 - Connected through the tunnel and then you come home? As soon as the phone
-  hears the beacon (within 15 seconds) it opens the direct link and drops
-  the tunnel.
+  hears the beacon it opens the direct link and drops the tunnel.
 - Containers' and VPNs' interfaces (`docker0`, `br-…`, `tailscale0`…) get no
   beacons and aren't offered to the phone.
 

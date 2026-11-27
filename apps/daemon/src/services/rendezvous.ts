@@ -79,7 +79,15 @@ export class Rendezvous {
   /** The paired phones changed: listen on the new set of mailboxes. */
   refresh(): void {
     if (!this.running || !this.safety) return;
-    if (this.topicList().join(",") !== this.topics) this.abort?.abort();
+    if (this.topicList().join(",") === this.topics) return;
+    if (this.abort) {
+      this.abort.abort(); // its end opens the new set
+      return;
+    }
+    // Not listening right now (nothing was paired, or waiting to retry): now.
+    if (this.retry) clearTimeout(this.retry);
+    this.retry = null;
+    this.listen();
   }
 
   private poll(on: boolean): void {
