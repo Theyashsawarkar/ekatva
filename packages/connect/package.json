@@ -1,6 +1,6 @@
 {
   "name": "@ekatva/connect",
-  "version": "0.2.0",
+  "version": "0.3.0",
   "private": true,
   "description": "For a Vayu phone app to talk to its laptop half through ekatva (an Expo module, Android).",
   "main": "src/index.ts",

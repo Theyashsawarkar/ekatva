@@ -1,7 +1,7 @@
 {
   "name": "ekatva",
   "private": true,
-  "version": "0.2.0",
+  "version": "0.3.0",
   "description": "Your phone and your laptop as one device.",
   "license": "MIT",
   "packageManager": "pnpm@10.12.1",

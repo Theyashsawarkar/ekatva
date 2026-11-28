@@ -2,7 +2,7 @@
 
 Newest first. Releases are tags (`vX.Y.Z`); every package's `version` moves together.
 
-## Unreleased
+## v0.3.0 -- 2026-11-28
 
 - **Jyoti's tile is the mandala** (the user's pick from ~/Documents/mockups/ekatva-jyoti-cards-3.html): the bar's own diya (an outline flame in sky for Akhaṇḍa, a filled one in kesari for Nandādīpa, unlit for Śānta) ringed by fine petals, none lit for Śānta, two rings for Akhaṇḍa, three for Nandādīpa, hanging off the tile's top right as the flame did. The swipe, the panes, the words and the pager stay; the background, rim and colours follow the diya. `mandala()` in ui/jyoti-art.ts; `jyoti-art.mjs` also writes `mandala-*.svg` for Darpaṇa.
 - Fixed: the phone couldn't reach the laptop through ekatva-link from outside: the link gave out its tunnel as `wss://host/link` and the phone adds `/link` itself (`/link/link`, turned away). The link now says `wss://host`, the phone takes either, and the link logs any request it turns away.

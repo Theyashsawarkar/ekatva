@@ -7,7 +7,7 @@ resolver = "3"
 
 [package]
 name = "ekatva-link"
-version = "0.2.0"
+version = "0.3.0"
 edition = "2024"
 license = "MIT"
 description = "ekatva's always-on link: Noise XX for paired phones, spliced to the user's session"

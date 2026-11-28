@@ -1,6 +1,6 @@
 {
   "name": "@ekatva/daemon-rs",
-  "version": "0.2.0",
+  "version": "0.3.0",
   "private": true,
   "description": "ekatva-rs, built by `pnpm build` after the daemon (cargo; skipped with a warning without it).",
   "scripts": {

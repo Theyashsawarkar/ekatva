@@ -104,7 +104,7 @@ import { SystemService } from "./services/system.js";
 import { TerminalService } from "./services/terminal.js";
 import { ALIVE_BODY, ALIVE_PATH, Tunnel } from "./services/tunnel.js";
 
-const VERSION = "0.2.0";
+const VERSION = "0.3.0";
 /** A peer that fails this many handshakes in the window is shut out for it. */
 const MAX_FAILURES = 8;
 const FAILURE_WINDOW_MS = 10 * 60_000;
