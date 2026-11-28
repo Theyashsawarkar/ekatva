@@ -15,7 +15,7 @@
   "devDependencies": {
     "@ekatva/config": "workspace:*",
     "typescript": "7.0.2",
-    "vitest": "5.0.5"
+    "vitest": "5.1.2"
   },
   "type": "module"
 }
