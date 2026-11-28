@@ -120,6 +120,9 @@ describe("a new server racing the folder watch", () => {
 const socket = `ekatva-tw-${process.pid}`;
 const run = tmuxOn(socket);
 let dir: string;
+// Waits on its terminal with a builtin: no child, so the pane's command
+// stays "claude" until the window is killed.
+const fakeClaude = () => [join(dir, "bin/claude"), "--norc", "--noprofile", "-c", "read -r _"];
 const tmuxQ = (args: string[]) =>
   execFileSync("tmux", ["-L", socket, ...args], { encoding: "utf8" });
 
@@ -127,8 +130,10 @@ beforeAll(async () => {
   dir = await fs.mkdtemp(join(tmpdir(), "ekatva-twr-"));
   await fs.mkdir(join(dir, "bin"));
   await fs.mkdir(join(dir, "claude", "sessions"), { recursive: true });
-  // A copy of sleep named "claude": tmux sees the command "claude".
-  await fs.copyFile("/usr/bin/sleep", join(dir, "bin/claude"));
+  // A copy of bash named "claude": tmux sees the command "claude". Not
+  // sleep: where coreutils is one multicall binary (uutils, Ubuntu 26.04),
+  // a copy named "claude" exits at once with "unknown program".
+  await fs.copyFile("/usr/bin/bash", join(dir, "bin/claude"));
   await fs.chmod(join(dir, "bin/claude"), 0o755);
   tmuxQ(["-f", "/dev/null", "new-session", "-d", "-s", "work", "-x", "100", "-y", "30"]);
 });
@@ -156,7 +161,7 @@ describe("agents told by a real (private) tmux", () => {
     await until(() => tmuxQ(["list-sessions", "-F", "#{session_name}"]).includes(WATCH_SESSION));
     expect((await agents.projects()).some((p) => p.name === "/")).toBe(false);
 
-    tmuxQ(["new-window", "-t", "work", join(dir, "bin/claude"), "300"]);
+    tmuxQ(["new-window", "-t", "work", ...fakeClaude()]);
     await until(() => (seen.at(-1)?.length ?? 0) === 1, 15_000);
     expect(seen.at(-1)?.[0]?.agent).toBe("claude");
     expect(agents.watching).toBe("events");
@@ -167,7 +172,7 @@ describe("agents told by a real (private) tmux", () => {
     // Its session killed by hand: it comes back, and still sees changes.
     tmuxQ(["kill-session", "-t", WATCH_SESSION]);
     await until(() => tmuxQ(["list-sessions", "-F", "#{session_name}"]).includes(WATCH_SESSION));
-    tmuxQ(["new-window", "-t", "work", join(dir, "bin/claude"), "300"]);
+    tmuxQ(["new-window", "-t", "work", ...fakeClaude()]);
     await until(() => (seen.at(-1)?.length ?? 0) === 1, 15_000);
     tmuxQ(["kill-window", "-t", "work:1"]);
     await until(() => seen.at(-1)?.length === 0, 15_000);
@@ -176,7 +181,7 @@ describe("agents told by a real (private) tmux", () => {
     tmuxQ(["kill-server"]);
     await new Promise((r) => setTimeout(r, 300));
     tmuxQ(["-f", "/dev/null", "new-session", "-d", "-s", "again", "-x", "100", "-y", "30"]);
-    tmuxQ(["new-window", "-t", "again", join(dir, "bin/claude"), "300"]);
+    tmuxQ(["new-window", "-t", "again", ...fakeClaude()]);
     await until(() => (seen.at(-1)?.length ?? 0) === 1, 15_000);
     expect(seen.at(-1)?.[0]?.session).toBe("again");
     // Set on the new server's session too, before anything else ran.
