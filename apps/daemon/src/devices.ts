@@ -1,4 +1,9 @@
-/** Paired devices and what each may do: devices.json in the state dir, 0600. */
+/**
+ * Paired devices and what each may do: devices.json in the state dir, 0600;
+ * or, attached to ekatva-link, the link's list (it holds the paired phones,
+ * so they can reach the laptop before anyone logs in): changes go to it, and
+ * it says when the list changed.
+ */
 import { mkdir, readFile, rename, writeFile } from "node:fs/promises";
 import { dirname } from "node:path";
 import { type AppGrant, type Capability, grantable } from "@ekatva/protocol";
@@ -15,8 +20,20 @@ export interface DeviceRecord {
 export class Devices {
   private list: DeviceRecord[] = [];
   private listeners = new Set<() => void>();
+  private link: { call(m: string, p?: unknown): Promise<unknown> } | null = null;
 
   constructor(private readonly file: string) {}
+
+  /** Follows ekatva-link from now on (its list, through replace()). */
+  attach(link: { call(m: string, p?: unknown): Promise<unknown> } | null): void {
+    this.link = link;
+  }
+
+  /** The link's list, as it says it changed. */
+  replace(list: DeviceRecord[]): void {
+    this.list = list.map((d) => ({ ...d, grants: grantable(d.grants), info: d.info ?? {} }));
+    for (const cb of this.listeners) cb();
+  }
 
   async load(): Promise<void> {
     try {
@@ -45,17 +62,21 @@ export class Devices {
     const i = this.list.findIndex((x) => x.key === d.key);
     if (i >= 0) this.list[i] = rec;
     else this.list.push(rec);
-    await this.save();
+    if (this.link) await this.link.call("devices.put", { record: rec });
+    else await this.save();
   }
 
   async remove(key: string): Promise<DeviceRecord | undefined> {
     const d = this.get(key);
     this.list = this.list.filter((x) => x.key !== key);
-    await this.save();
+    if (this.link) await this.link.call("devices.remove", { key });
+    else await this.save();
     return d;
   }
 
   async seen(key: string, info?: Record<string, string>): Promise<void> {
+    // The link notes when its phones come and go.
+    if (this.link) return;
     const d = this.get(key);
     if (!d) return;
     d.lastSeen = Date.now();

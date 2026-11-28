@@ -3,11 +3,13 @@
  * (Śānta, Akhaṇḍa, Nandādīpa). Swipe left for more awake, right for less;
  * the panel follows the finger, stretches at the ends and snaps.
  *
- * The flame is the focus, bigger than the tile and cut by its top right edge
- * (ui/jyoti-art.ts, the same drawing as Darpaṇa's and the bar's): at dusk for
- * Śānta, blue for Akhaṇḍa, bright red for Nandādīpa. A vector, so it's sharp; nothing here is blurred
- * (no glow behind it, no coloured shadow under the tile). Only the pane you
- * see draws its flame (the neighbours join while you drag).
+ * The mandala is the focus (2026-11-28, the user's pick): the bar's diya
+ * ringed by fine petals, hanging off the tile's top right corner; no rings lit
+ * for Śānta, two for Akhaṇḍa, three for Nandādīpa, in the diya's own colours
+ * (sky, kesari: the waybar's). ui/jyoti-art.ts draws it, the same drawing as
+ * Darpaṇa's card. A vector, so it's sharp; nothing is blurred (no glow, no
+ * coloured shadow). Only the pane you see draws it (the neighbours join while
+ * you drag).
  */
 import type { JyotiLevel } from "@ekatva/protocol";
 import { LinearGradient } from "expo-linear-gradient";
@@ -15,17 +17,17 @@ import { useEffect, useState } from "react";
 import { Animated, Pressable, StyleSheet, View } from "react-native";
 import { GestureDetector, usePanGesture } from "react-native-gesture-handler";
 import { SvgXml } from "react-native-svg";
-import { flame } from "../jyoti-art";
+import { DIYA_COLOR, mandala } from "../jyoti-art";
 import { Txt } from "../lac";
 import { k } from "../theme";
 
 const LEVELS: JyotiLevel[] = ["off", "on", "high"];
 const NAME: Record<JyotiLevel, string> = { off: "Śānta", on: "Akhaṇḍa", high: "Nandādīpa" };
-/** Each level's flame, drawn once (the SVG text doesn't change). */
-const FLAME: Record<JyotiLevel, string> = {
-  off: flame("off"),
-  on: flame("on"),
-  high: flame("high"),
+/** Each level's mandala, drawn once (the SVG text doesn't change). */
+const ART: Record<JyotiLevel, string> = {
+  off: mandala("off"),
+  on: mandala("on"),
+  high: mandala("high"),
 };
 /** One line each: it sits under the name. */
 const SAYS: Record<JyotiLevel, string> = {
@@ -33,18 +35,18 @@ const SAYS: Record<JyotiLevel, string> = {
   on: "Awake until the lid shuts",
   high: "Awake with the lid closed",
 };
-/** The level's colour: lilac-grey, cool blue, ember. */
-const COLOR: Record<JyotiLevel, string> = { off: k.rest, on: k.cool, high: k.ember };
+/** The level's colour, the diya's (the bar's): lilac, sky, kesari. */
+const COLOR: Record<JyotiLevel, string> = DIYA_COLOR;
 const BG: Record<JyotiLevel, [string, string]> = {
-  off: ["#221c2b", "#18141e"],
-  on: ["#25304a", "#1a1d2c"],
-  high: ["#3d261d", "#24171a"],
+  off: ["#221d2a", "#16131b"],
+  on: ["#13263b", "#0b141e"],
+  high: ["#371c12", "#1b110d"],
 };
 /** The edge: brighter at the top left, where the light falls. */
 const RIM: Record<JyotiLevel, [string, string, string]> = {
   off: ["rgba(236,224,206,0.22)", "rgba(236,224,206,0.05)", "rgba(236,224,206,0.03)"],
-  on: ["rgba(160,195,240,0.75)", "rgba(134,174,224,0.18)", "rgba(134,174,224,0.10)"],
-  high: ["rgba(245,170,120,0.85)", "rgba(229,139,82,0.25)", "rgba(229,139,82,0.15)"],
+  on: ["rgba(143,214,236,0.70)", "rgba(143,214,236,0.18)", "rgba(143,214,236,0.10)"],
+  high: ["rgba(247,176,125,0.80)", "rgba(247,176,125,0.24)", "rgba(247,176,125,0.14)"],
 };
 const TRACK = 30;
 const PILL = 12;
@@ -174,7 +176,7 @@ function Pane({
 }: {
   level: JyotiLevel;
   width: number;
-  /** Draw the flame (the pane in view, or all while dragging). */
+  /** Draw the mandala (the pane in view, or all while dragging). */
   drawn: boolean;
 }) {
   const color = COLOR[level];
@@ -187,10 +189,10 @@ function Pane({
     >
       {drawn ? (
         <View style={s.art} pointerEvents="none">
-          <SvgXml xml={FLAME[level]} width="100%" height="100%" />
+          <SvgXml xml={ART[level]} width="100%" height="100%" />
         </View>
       ) : null}
-      {/* The words sit over the flame's base: a fade to the tile's own colour keeps them clear. */}
+      {/* The words sit under the mandala's rings: a fade to the tile's own colour keeps them clear. */}
       <LinearGradient
         colors={[`${BG[level][1]}00`, BG[level][1]]}
         locations={[0, 0.55]}
@@ -246,7 +248,8 @@ const s = StyleSheet.create({
   // right edge (the pane clips it), so the tile reads as a window onto a fire
   // (~/Documents/mockups/ekatva-jyoti-crop.html, "off the right edge"). Its
   // left tongue starts ~95 dp in, clear of the JYOTI label and the pager.
-  art: { position: "absolute", right: -44, top: -20, width: 176, height: 176 },
+  // The mandala's 200-unit box, its lamp 38 from the right edge and 40 down.
+  art: { position: "absolute", right: -62, top: -60, width: 200, height: 200 },
   // Under the name and the line below it: from clear to the tile's colour.
   fade: { position: "absolute", left: 0, right: 0, bottom: 0, height: 74 },
   // The 48 dp target is centred on the 30 × 4 track, under the JYOTI label.

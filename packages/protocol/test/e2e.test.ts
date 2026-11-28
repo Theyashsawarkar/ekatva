@@ -100,6 +100,9 @@ afterEach(() => {
   for (const c of closers.splice(0)) c();
 });
 
+/** What power.unlock was handed: the lock screen's side of the test. */
+const typed: string[] = [];
+
 async function setup(grants: Capability[]) {
   const laptopKey = generateKeyPair();
   const phoneKey = generateKeyPair();
@@ -120,6 +123,12 @@ async function setup(grants: Capability[]) {
     files: fs.service,
     undo: fs.undo,
     root: null,
+    power: {
+      unlock: async (password: string) => {
+        typed.push(password);
+        return { value: { was: "locked" }, summary: "Unlocked the laptop" };
+      },
+    },
   } as unknown as LaptopServices;
   const laptopSide = accept(lt, {
     me: laptopKey,
@@ -215,6 +224,22 @@ describe("the laptop's API over the encrypted channel", () => {
     const undoEntry = after.find((e) => e.undoes === del);
     expect(undoEntry?.undo).toBeTruthy();
     expect(await journal.check()).toBeNull();
+  });
+
+  it("unlock needs its own grant, and the password never reaches the journal", async () => {
+    typed.length = 0;
+    const without = await setup(ALL.filter((c) => c !== "unlock"));
+    await expect(
+      without.client.power.unlock.mutate({ password: "correct horse 7!" }),
+    ).rejects.toMatchObject({ data: { code: "FORBIDDEN" } });
+    expect(typed).toEqual([]);
+
+    const { client, journal } = await setup(ALL);
+    await client.power.unlock.mutate({ password: "correct horse 7!" });
+    expect(typed).toEqual(["correct horse 7!"]);
+    const log = [...(await without.journal.since(0)), ...(await journal.since(0))];
+    expect(log.at(-1)?.input).toEqual({ password: "[redacted]" });
+    expect(JSON.stringify(log)).not.toContain("correct horse");
   });
 
   it("streams the journal live to a subscriber", async () => {

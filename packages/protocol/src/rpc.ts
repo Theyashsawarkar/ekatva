@@ -8,7 +8,7 @@
  * shapes are tRPC's. The client side is tRPC's real wsLink, given a
  * WebSocket look-alike that rides on the port.
  */
-import { type Channel, utf8 } from "@ekatva/link";
+import { type PortChannel as Channel, utf8 } from "@ekatva/link";
 import type { AnyRouter, inferRouterContext } from "@trpc/server";
 import {
   callProcedure,

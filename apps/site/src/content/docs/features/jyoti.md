@@ -21,12 +21,19 @@ ekatva jyoti akhanda
 ekatva jyoti shanta
 ```
 
-## Nandādīpa, safely
+## Nandādīpa: reachable with the lid closed
 
-- Closing the lid **still locks** the laptop: ekatva watches the lid and locks.
-- When the battery drops to **10%** and it's discharging, Nandādīpa falls back
-  to Akhaṇḍa, so the closed laptop can sleep before it dies. That's logged.
-- An optional timer turns it off.
+- Closing the lid **doesn't lock** the laptop and doesn't put it to sleep: it
+  keeps running as you left it, so you can reach it from anywhere through
+  ekatva.
+- The block is held by a systemd user unit of its own
+  (`ekatva-jyoti-high`, or `ekatva-jyoti-on` at Akhaṇḍa), not by the daemon:
+  stopping, restarting or updating ekatva doesn't let the laptop sleep. A
+  restarted ekatva picks the unit up again. Only turning Jyoti off ends it.
+- **It stays at the level you set**, until you change it: nothing switches it
+  by itself, not even a low battery (a closed laptop in Nandādīpa runs until
+  it's empty, so put it out before a long trip in a bag).
+- An optional timer turns it off, only when you set one.
 
 ## Sleep and lock still work
 

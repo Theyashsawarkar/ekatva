@@ -1,0 +1,2 @@
+# The user ekatva-link and its tunnel run as (systemd-sysusers).
+u ekatva - "ekatva link" /var/lib/ekatva /usr/bin/nologin

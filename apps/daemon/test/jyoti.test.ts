@@ -6,7 +6,7 @@ import { type Host, JyotiService } from "../src/services/jyoti.js";
 
 let dir: string;
 let calls: string[];
-let holds: { args: string[]; stopped: boolean }[];
+let holds: { args: string[]; unit?: string; stopped: boolean }[];
 let lid: boolean | null;
 let battery: { percent: number; discharging: boolean } | null;
 let swayidle: boolean;
@@ -22,8 +22,8 @@ function host(): Host {
       if (line === "systemctl --user start swayidle.service") swayidle = true;
       return { code: 0, out: "" };
     },
-    hold: (_cmd, args) => {
-      const h = { args, stopped: false };
+    hold: (_cmd, args, unit) => {
+      const h = { args, unit, stopped: false };
       holds.push(h);
       return {
         stop: async () => {
@@ -87,66 +87,59 @@ describe("jyoti", () => {
     expect(await exists(join(dir, "jyoti/enabled"))).toBe(false);
   });
 
-  it("high: holds the lid switch too, and locks when the lid closes", async () => {
+  it("high: holds the lid switch too, in its own unit, and never locks when the lid closes", async () => {
     vi.useFakeTimers();
     const c = make();
     await c.set("high", null);
     expect(holds[0]?.args).toContain("--what=idle:sleep:handle-lid-switch");
-    lid = true;
-    await vi.advanceTimersByTimeAsync(2100);
-    expect(calls).toContain("lock");
-    c.shutdown();
-  });
-
-  it("high: told by logind and UPower, it reads the lid only on a change", async () => {
-    vi.useFakeTimers();
-    let changed: (() => void) | null = null;
-    let down: (() => void) | null = null;
-    let stopped = 0;
-    let reads = 0;
-    const h = host();
-    const read = h.lidClosed;
-    h.lidClosed = () => {
-      reads++;
-      return read();
-    };
-    h.watchPower = (onChange, onDown) => {
-      changed = onChange;
-      down = onDown;
-      return { stop: () => stopped++ };
-    };
-    const c = new JyotiService(h, join(dir, "jyoti.json"), join(dir, "jyoti/enabled"));
-    await c.set("high", null);
-    const before = reads;
+    expect(holds[0]?.unit).toBe("ekatva-jyoti-high.service");
     lid = true;
     await vi.advanceTimersByTimeAsync(10_000);
-    expect(reads).toBe(before); // no polling while watched
     expect(calls).not.toContain("lock");
-    (changed as unknown as () => void)();
-    expect(calls).toContain("lock");
-    // The watch fails: it polls instead.
-    lid = false;
-    (down as unknown as () => void)();
-    await vi.advanceTimersByTimeAsync(2100);
-    lid = true;
-    await vi.advanceTimersByTimeAsync(2100);
-    expect(calls.filter((x) => x === "lock")).toHaveLength(2);
+    expect((await c.get()).level).toBe("high");
     c.shutdown();
-    expect(stopped).toBe(1);
   });
 
-  it("high drops to on when the battery runs low", async () => {
+  it("the block outlives the daemon: shutdown leaves it, a restart adopts it", async () => {
+    const c = make();
+    await c.set("high", null);
+    c.shutdown();
+    expect(holds[0]?.stopped).toBe(false);
+    const again = make();
+    await again.restore();
+    expect(holds.at(-1)?.unit).toBe("ekatva-jyoti-high.service");
+    // The same level again: nothing stopped it, not even for a moment.
+    expect(holds.some((h) => h.stopped)).toBe(false);
+    expect(calls).not.toContain("systemctl --user stop ekatva-jyoti-high.service");
+    again.shutdown();
+  });
+
+  it("a change of level starts the new block before the old one goes", async () => {
+    const c = make();
+    await c.set("on", null);
+    await c.set("high", null);
+    expect(holds.map((h) => [h.unit, h.stopped])).toEqual([
+      ["ekatva-jyoti-on.service", true],
+      ["ekatva-jyoti-high.service", false],
+    ]);
+    await c.set("off", null);
+    expect(calls).toContain(
+      "systemctl --user stop ekatva-jyoti-on.service ekatva-jyoti-high.service",
+    );
+    c.shutdown();
+  });
+
+  it("high stays high when the battery runs low: the level is the user's", async () => {
     vi.useFakeTimers();
     const c = make();
     const auto: string[] = [];
     c.onAuto = (s) => auto.push(s);
     await c.set("high", null);
-    battery = { percent: 8, discharging: true };
-    await vi.advanceTimersByTimeAsync(2100);
-    await settle(async () => (await c.get()).level === "on" && auto.length > 0);
-    expect((await c.get()).level).toBe("on");
-    expect(auto[0]).toMatch(/battery at 8%/);
-    expect(holds.at(-1)?.args).toContain("--what=idle:sleep");
+    battery = { percent: 3, discharging: true };
+    await vi.advanceTimersByTimeAsync(10_000);
+    expect((await c.get()).level).toBe("high");
+    expect(auto).toHaveLength(0);
+    expect(holds.at(-1)?.args).toContain("--what=idle:sleep:handle-lid-switch");
     c.shutdown();
   });
 

@@ -85,6 +85,7 @@ function Routes() {
           <Stack.Screen name="agent/[id]" options={{ animation: "slide_from_right" }} />
           <Stack.Screen name="file" options={{ animation: "slide_from_right" }} />
           <Stack.Screen name="root/[id]" options={sheet} />
+          <Stack.Screen name="laptop-unlock" options={sheet} />
           <Stack.Screen name="trackpad" options={{ animation: "slide_from_right" }} />
           <Stack.Screen name="root-history" options={sheet} />
           <Stack.Screen name="notifications" options={{ animation: "slide_from_right" }} />

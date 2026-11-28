@@ -24,6 +24,7 @@ import {
   PAIR_TTL_MS,
   PORT_LAPTOP,
   PORT_PHONE,
+  type PortChannel,
   TokenBook,
   toB64u,
   webSocketTransport,
@@ -69,6 +70,7 @@ import { type WebSocket, WebSocketServer } from "ws";
 import type { Config } from "./config.js";
 import { type DeviceRecord, Devices } from "./devices.js";
 import { FileStore } from "./journalFile.js";
+import { LinkClient, type LinkPending } from "./link.js";
 import type { Approve, StreamSession } from "./mcp.js";
 import {
   displayEnv,
@@ -116,6 +118,12 @@ export interface DaemonOptions {
   keepaliveMs?: number;
   config: Config;
   key: KeyPair;
+  /**
+   * ekatva-link's socket: attach to it (the link holds the identity, the
+   * paired phones and their connections) instead of listening here. Only the
+   * real service passes it; tests and a laptop without the link don't.
+   */
+  link?: string;
   stateDir: string;
   socketPath: string;
   /**
@@ -191,7 +199,7 @@ export interface DaemonOptions {
 
 interface Peer {
   key: string;
-  channel: Channel;
+  channel: PortChannel;
   phone: TRPCClient<PhoneRouter>;
   close: (reason: string) => void;
   via: "lan" | "tunnel";
@@ -241,6 +249,11 @@ export class Daemon {
   private peers = new Map<string, Peer>();
   private tokens = new TokenBook();
   private pendings = new Map<string, Pending>();
+  /** Attached to ekatva-link: phones come through it (docs/plans/link-and-session.md). */
+  private link: LinkClient | null = null;
+  private relink: ReturnType<typeof setInterval> | null = null;
+  /** Set by stop(): the link closing then is ours, not a reason to reattach. */
+  private stopping = false;
   private pendingListeners = new Set<(p: PendingPair[]) => void>();
   private failures = new Map<string, { n: number; since: number }>();
   private http: Server | null = null;
@@ -423,12 +436,13 @@ export class Daemon {
         3_600_000,
       ),
     );
-    await this.listen();
+    const attached = await this.attachLink();
+    if (!attached) await this.listen();
     await this.listenLocal();
     await this.listenMcp();
     await this.root.listen();
     // Watch the mailboxes when phones may reach the laptop from outside.
-    if (this.o.config.tunnel.kind !== "none" && this.o.rendezvous !== false) {
+    if (!attached && this.o.config.tunnel.kind !== "none" && this.o.rendezvous !== false) {
       this.rendezvous = new Rendezvous(
         this.o.key,
         () => this.devices.all(),
@@ -439,7 +453,7 @@ export class Daemon {
       );
       this.rendezvous.start(this.o.rendezvousEveryMs);
     }
-    this.keepTunnel();
+    if (!attached) this.keepTunnel();
     if (this.o.desktopNotifications !== false) {
       this.bridge = new NotificationBridge(
         this.o.desktopNotifications ?? new DesktopNotifications((m) => this.log(m)),
@@ -482,7 +496,7 @@ export class Daemon {
         }
     });
     this.clipSync.start();
-    if (this.o.beacon ?? this.o.config.advertise) {
+    if (!attached && (this.o.beacon ?? this.o.config.advertise)) {
       this.beacon = new BeaconSender(
         this.o.key,
         () =>
@@ -499,7 +513,7 @@ export class Daemon {
       );
       await this.beacon.start();
     }
-    if (this.o.checkFirewall !== false) {
+    if (!attached && this.o.checkFirewall !== false) {
       const check = async () => {
         const was = this.firewall;
         this.firewall = await firewallProblem(this.port).catch(() => null);
@@ -512,8 +526,105 @@ export class Daemon {
       this.timers.push(setInterval(() => void check(), 60_000));
     }
     this.log(
-      `ekatva ${VERSION}: listening on port ${this.port}, ${this.devices.all().length} paired device(s)`,
+      attached && this.link
+        ? `ekatva ${VERSION}: attached to ekatva-link (port ${this.port}), ${this.devices.all().length} paired device(s)`
+        : attached
+          ? `ekatva ${VERSION}: waiting for ekatva-link (it holds the phones)`
+          : `ekatva ${VERSION}: listening on port ${this.port}, ${this.devices.all().length} paired device(s)`,
     );
+  }
+
+  // ---------------------------------------------------------- ekatva-link
+  /** Attaches to ekatva-link when the service was told where it is. */
+  private async attachLink(): Promise<boolean> {
+    const path = this.o.link;
+    if (!path) return false;
+    // Phones reach the link on its port (the same setting as before the link).
+    this.port = this.o.port ?? this.o.config.port;
+    if (!existsSync(path)) {
+      this.log("ekatva-link isn't up yet; waiting for it");
+      this.waitForLink();
+      return true;
+    }
+    let link: LinkClient;
+    try {
+      link = await LinkClient.connect(
+        {
+          open: (c, via) => this.onPeer(c, via),
+          devices: (list) => {
+            this.devices.replace(list);
+            this.emitDevices();
+          },
+          pending: (list) => this.linkPending(list),
+          lost: () => this.linkLost(),
+        },
+        path,
+      );
+    } catch (e) {
+      this.log(`ekatva-link didn't answer (${(e as Error).message}); waiting for it`);
+      this.waitForLink();
+      return true;
+    }
+    this.link = link;
+    this.devices.attach(link);
+    this.port = link.hello?.port ?? this.port;
+    return true;
+  }
+
+  /** The link restarted or stopped: phones come back through it once it's there. */
+  private linkLost(): void {
+    if (!this.link || this.stopping) return;
+    this.link = null;
+    this.devices.attach(null);
+    for (const p of this.pendings.values())
+      p.decide({ ok: false, reason: "ekatva-link went away" });
+    this.log("ekatva-link went away; waiting for it");
+    this.waitForLink();
+  }
+
+  private waitForLink(): void {
+    if (this.relink || this.stopping) return;
+    this.relink = setInterval(() => {
+      if (this.link) return;
+      void this.attachLink().then(() => {
+        if (this.link && this.relink) {
+          clearInterval(this.relink);
+          this.relink = null;
+          this.log("attached to ekatva-link again");
+        }
+      });
+    }, 2000);
+  }
+
+  /** Pairings waiting on the desktop, as the link has them. */
+  private linkPending(list: LinkPending[]): void {
+    const ids = new Set(list.map((p) => p.id));
+    for (const id of [...this.pendings.keys()]) if (!ids.has(id)) this.pendings.delete(id);
+    for (const p of list) {
+      if (this.pendings.has(p.id)) continue;
+      this.pendings.set(p.id, {
+        ...p,
+        decide: (d: Decision) => {
+          this.pendings.delete(p.id);
+          this.emitPending();
+          void this.link
+            ?.call(
+              "pair.decide",
+              d.ok
+                ? { id: p.id, ok: true, welcome: d.welcome }
+                : { id: p.id, ok: false, reason: d.reason },
+            )
+            .catch((e: Error) => this.log(`pairing ${p.name}: ${e.message}`));
+        },
+      });
+      this.notify(
+        `${p.name} wants to pair`,
+        `Check that it shows ${p.sas.join(" ")}. Click to answer in the ekatva window.`,
+        true,
+        "pair",
+      );
+    }
+    this.emitPending();
   }
 
   async stop(): Promise<void> {
@@ -524,6 +635,11 @@ export class Daemon {
     this.peers.clear();
     this.clipSync.update();
     for (const p of this.pendings.values()) p.decide({ ok: false, reason: "the laptop stopped" });
+    this.stopping = true;
+    if (this.relink) clearInterval(this.relink);
+    this.relink = null;
+    this.link?.close();
+    this.link = null;
     this.beacon?.stop();
     this.clipSync.stop();
     this.stopRootWatch?.();
@@ -695,7 +811,7 @@ export class Daemon {
     }));
   }
 
-  private onPeer(channel: Channel, via: "lan" | "tunnel"): void {
+  private onPeer(channel: PortChannel, via: "lan" | "tunnel"): void {
     const key = toB64u(channel.remoteStatic);
     const device = this.devices.get(key);
     if (!device) {
@@ -824,7 +940,11 @@ export class Daemon {
         set: (level, minutes) => this.jyoti.set(level, minutes),
         changes: (signal) => this.jyoti.changes(signal),
       },
-      power: { lock: () => this.system.lock(), suspend: () => this.system.suspend() },
+      power: {
+        lock: () => this.system.lock(),
+        unlock: (password) => this.system.unlock(password),
+        suspend: () => this.system.suspend(),
+      },
       appearance: {
         get: () => this.appearance.get(),
         set: (mode) => this.appearance.set(mode),
@@ -962,6 +1082,22 @@ export class Daemon {
 
   /** Every way to reach the laptop now. */
   route(): Route {
+    const hello = this.link?.hello;
+    if (hello) {
+      // ekatva-link's tunnel (ekatva-tunnel.service) keeps the address; it's always up.
+      const url = hello.url;
+      const tunnel = {
+        kind: url ? ("named" as const) : ("none" as const),
+        state: url ? ("up" as const) : ("off" as const),
+        url,
+        always: true,
+        since: null,
+        problem: null,
+        hostname: url ? new URL(url).host : null,
+        name: null,
+      };
+      return { url, lan: this.lanAddresses(), tunnel };
+    }
     const tunnel = this.tunnel.info();
     return { url: tunnel.url, lan: this.lanAddresses(), tunnel };
   }
@@ -1029,10 +1165,20 @@ export class Daemon {
     },
     pair: {
       start: async (away): Promise<Offer> => {
-        const token = this.tokens.issue();
+        const link = this.link;
+        const token = link
+          ? fromB64u((await link.call<{ token: string }>("pair.token")).token)
+          : this.tokens.issue();
         const lan = this.lanAddresses();
         let url: string | null = null;
-        if (away) {
+        if (away && link) {
+          url = link.hello?.url ?? null;
+          if (!url && !lan.length)
+            throw new TRPCError({
+              code: "PRECONDITION_FAILED",
+              message: "no way in from outside: ekatva-link has no tunnel; pair on the same Wi-Fi",
+            });
+        } else if (away) {
           const reach = await this.tunnel.start();
           url = reach.url;
           lan.push(...reach.lan);

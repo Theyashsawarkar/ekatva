@@ -104,6 +104,32 @@ const gone = (e: unknown) =>
   (e as { code?: string })?.code === "E_KEY_GONE" ||
   /E_KEY_GONE|key is gone|dropped the key/i.test(String((e as Error)?.message ?? e));
 
+/**
+ * Laptop passwords for Unlock (the laptop's lock screen), by laptop key, in
+ * the same box as the keys: each read is one fingerprint (or screen lock),
+ * each change one to read and one to seal. Never kept in memory: the app
+ * opens the box for one unlock and forgets the text.
+ */
+export const LaptopPasswords = {
+  async get(box: SecretBox, laptop: string): Promise<string | null> {
+    const text = await box.open();
+    if (!text) return null;
+    const pw = (JSON.parse(text) as { unlock?: Record<string, string> }).unlock?.[laptop];
+    return typeof pw === "string" && pw ? pw : null;
+  },
+
+  /** Keeps it (null: forgets it). */
+  async set(box: SecretBox, laptop: string, password: string | null): Promise<void> {
+    const text = await box.open();
+    if (!text) throw new Error("not set up");
+    const j = JSON.parse(text) as V3 & { unlock?: Record<string, string> };
+    const unlock = { ...(j.unlock ?? {}) };
+    if (password) unlock[laptop] = password;
+    else delete unlock[laptop];
+    await box.seal(JSON.stringify({ ...j, unlock }));
+  },
+};
+
 export const Vault = {
   /** Set up? Never asks for the fingerprint. */
   async exists(box: SecretBox, kv: KV): Promise<boolean> {

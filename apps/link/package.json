@@ -1,0 +1,10 @@
+{
+  "name": "@ekatva/link-rs",
+  "version": "0.2.0",
+  "private": true,
+  "description": "ekatva-link and ekatva-greeter, built by `pnpm build` (cargo; skipped with a warning without it).",
+  "scripts": {
+    "build": "sh build.sh",
+    "test": "cargo test --quiet || test -z \"$(command -v cargo)\""
+  }
+}

@@ -7,6 +7,26 @@ import type { Done, PhoneEvent, Status } from "@ekatva/protocol";
 import { TRPCError } from "@trpc/server";
 import { saveImage } from "./phoneImages.js";
 
+/** ydotool, at its daemon's socket (as input.ts finds it); stdin when given. */
+function typeKeys(args: string[], input?: string): Promise<void> {
+  const runtime = process.env.XDG_RUNTIME_DIR;
+  const socket = runtime ? join(runtime, ".ydotool_socket") : null;
+  const env = {
+    ...process.env,
+    ...(socket && existsSync(socket) && !process.env.YDOTOOL_SOCKET
+      ? { YDOTOOL_SOCKET: socket }
+      : {}),
+  };
+  return new Promise((resolve, reject) => {
+    const child = execFile("ydotool", args, { env, timeout: 15_000 }, (err) =>
+      // Never the output: it could echo what was typed.
+      err ? reject(new Error(`ydotool ${args[0]} failed`)) : resolve(),
+    );
+    if (input !== undefined) child.stdin?.end(input);
+    else child.stdin?.end();
+  });
+}
+
 export function run(cmd: string, args: string[], input?: string): Promise<string> {
   return new Promise((resolve, reject) => {
     const child = execFile(
@@ -172,6 +192,39 @@ export class SystemService {
   async lock(): Promise<Done<null>> {
     await lockScreen();
     return { value: null, summary: "Locked the laptop" };
+  }
+
+  /**
+   * Unlocks the lock screen from the phone: the user's password typed into
+   * swaylock as a keyboard would (ydotool, through the kernel, so it reaches
+   * the lock surface). The password goes on ydotool's stdin, never on a
+   * command line, is used once in memory and never logged; PAM still decides,
+   * as it would for a keypress. One try per call: the phone never retries a
+   * wrong one (faillock locks the account after 3).
+   */
+  async unlock(password: string): Promise<Done<{ was: "locked" | "unlocked" }>> {
+    if ((await locked()) !== true)
+      return { value: { was: "unlocked" }, summary: "The laptop was already unlocked" };
+    try {
+      await typeKeys(["key", "1:1", "1:0"]); // Escape: clear anything typed on the laptop
+      await typeKeys(["type", "--key-delay=8", "--key-hold=8", "-f", "-"], password);
+      await typeKeys(["key", "28:1", "28:0"]); // Enter
+    } catch (e) {
+      throw new TRPCError({
+        code: "PRECONDITION_FAILED",
+        message: `Couldn't type on the laptop: ${(e as Error).message.split(":")[0]}`,
+      });
+    }
+    // PAM answers in a moment, or ~2 s later when the password was wrong.
+    for (let i = 0; i < 40; i++) {
+      await pause(150);
+      if ((await locked()) === false)
+        return { value: { was: "locked" }, summary: "Unlocked the laptop" };
+    }
+    throw new TRPCError({
+      code: "UNAUTHORIZED",
+      message: "Still locked: the password was wrong",
+    });
   }
 
   /**

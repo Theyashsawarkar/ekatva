@@ -18,10 +18,12 @@ import {
   nonce,
   openBeacon,
   PORT_LAPTOP,
+  PORT_LINK,
   PORT_PHONE,
   parseOffer,
   type Transport,
   toB64u,
+  utf8,
 } from "@ekatva/link";
 import {
   channelWebSocket,
@@ -58,7 +60,17 @@ export type LinkState =
   | { status: "unpaired" }
   | { status: "offline"; laptop: string; error: string | null; retryAt: number | null }
   | { status: "connecting"; laptop: string }
-  | { status: "online"; laptop: string; via: "lan" | "tunnel"; grants: string[] };
+  | {
+      status: "online";
+      laptop: string;
+      via: "lan" | "tunnel";
+      grants: string[];
+      /**
+       * Someone is logged in on the laptop. False: ekatva-link answered at the
+       * login screen (after a restart): only its own requests work (ask()).
+       */
+      session: boolean;
+    };
 
 export interface LinkDeps {
   secrets: Secrets;
@@ -198,7 +210,10 @@ export class LinkManager {
     tunnelFirst = false,
   ): { url: string; via: "lan" | "tunnel" }[] {
     const direct = lan.map((h) => ({ url: `ws://${h}/link`, via: "lan" as const }));
-    const tunnel = url ? [{ url: `${url.replace(/\/+$/, "")}/link`, via: "tunnel" as const }] : [];
+    // A saved address with /link already on it (ekatva-link 0.2.0 said so for a
+    // while) gets it once, not twice.
+    const base = url?.replace(/\/+$/, "").replace(/\/link$/, "");
+    const tunnel = base ? [{ url: `${base}/link`, via: "tunnel" as const }] : [];
     return tunnelFirst ? [...tunnel, ...direct] : [...direct, ...tunnel];
   }
 
@@ -585,8 +600,16 @@ export class LinkManager {
     // quick while you're looking at the app, gentler in the background, with
     // a little jitter so a phone and a restarted laptop don't keep colliding.
     const replaced = !!error && /replaced by a new connection/.test(error);
+    // ekatva-link sends the phone round again when someone logs in or out on the
+    // laptop: back at once, into the new state, and it isn't an error.
+    const handover = !!error && /the laptop's session (started|ended)/.test(error);
+    if (handover) error = null;
     const cap = this.foreground ? FOREGROUND_MAX_MS : BACKGROUND_MAX_MS;
-    const base = replaced ? REPLACED_WAIT_MS : Math.min(cap, 600 * 2 ** this.attempts++);
+    const base = handover
+      ? 300
+      : replaced
+        ? REPLACED_WAIT_MS
+        : Math.min(cap, 600 * 2 ** this.attempts++);
     const delay = Math.round(base * (0.85 + Math.random() * 0.3));
     this.set({ status: "offline", laptop, error, retryAt: this.now() + delay });
     this.retryTimer = setTimeout(() => void this.connectNow(), delay);
@@ -600,6 +623,11 @@ export class LinkManager {
   ): void {
     this.cleanup?.();
     this.channel = channel;
+    const grants = ((welcome as { grants?: string[] } | null)?.grants ?? []).slice();
+    if ((welcome as { session?: boolean } | null)?.session === false) {
+      this.loginScreen(channel, laptop, via, grants);
+      return;
+    }
     const stopServing = serveRouter({
       router: phoneRouter,
       channel,
@@ -639,8 +667,7 @@ export class LinkManager {
     this.stopHeartbeat();
     void this.d.laptops.update(laptop.key, { lastSeen: this.now(), name: channel.peer.name });
     this.via = via;
-    const grants = ((welcome as { grants?: string[] } | null)?.grants ?? []).slice();
-    this.set({ status: "online", laptop: laptop.key, via, grants });
+    this.set({ status: "online", laptop: laptop.key, via, grants, session: true });
     this.startHeartbeat();
     channel.onClose((reason) => {
       cleanup();
@@ -651,6 +678,65 @@ export class LinkManager {
         this.client = null;
         this.scheduleRetry(laptop.key, reason === "bye" ? null : reason);
       }
+    });
+  }
+
+  /**
+   * Linked to ekatva-link while nobody is logged in: no tRPC (the session
+   * isn't there to answer); the link's own requests (status, login, reboot,
+   * power off) go through askLink().
+   */
+  private loginScreen(
+    channel: Channel,
+    laptop: LaptopRecord,
+    via: "lan" | "tunnel",
+    grants: string[],
+  ): void {
+    this.client = null;
+    this.via = via;
+    this.cleanup = () => undefined;
+    void this.d.laptops.update(laptop.key, { lastSeen: this.now(), name: channel.peer.name });
+    this.set({ status: "online", laptop: laptop.key, via, grants, session: false });
+    channel.onClose((reason) => {
+      if (this.channel !== channel) return;
+      this.channel = null;
+      this.scheduleRetry(laptop.key, reason === "bye" ? null : reason);
+    });
+  }
+
+  private asked = 0;
+
+  /**
+   * One request to ekatva-link itself (port 3): works whether or not anyone is
+   * logged in. Rejects with the link's error; `code` says which (UNAUTHORIZED:
+   * a wrong password).
+   */
+  askLink<T = unknown>(
+    m: "status" | "login" | "reboot" | "poweroff",
+    p: unknown = null,
+  ): Promise<T> {
+    const channel = this.channel;
+    if (!channel?.isOpen) return Promise.reject(new Error("not connected to the laptop"));
+    const id = ++this.asked;
+    return new Promise<T>((resolve, reject) => {
+      const timer = setTimeout(() => {
+        off();
+        reject(new Error("the laptop didn't answer"));
+      }, 45_000);
+      const off = channel.onPort(PORT_LINK, (d) => {
+        let r: { id?: number; ok?: boolean; v?: T; e?: string; code?: string };
+        try {
+          r = JSON.parse(utf8.decode(d));
+        } catch {
+          return;
+        }
+        if (r.id !== id) return;
+        clearTimeout(timer);
+        off();
+        if (r.ok) resolve(r.v as T);
+        else reject(Object.assign(new Error(r.e ?? "refused"), { code: r.code }));
+      });
+      channel.sendText(PORT_LINK, JSON.stringify({ id, m, p }));
     });
   }
 

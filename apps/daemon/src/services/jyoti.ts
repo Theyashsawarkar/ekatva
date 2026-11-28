@@ -6,13 +6,19 @@
  *   on         Akhaṇḍa (अखण्ड, the unbroken flame): no dimming, no lock, no
  *              sleep from idleness
  *   high       Nandādīpa (नन्दादीप, the lamp kept burning day and night):
- *              Akhaṇḍa, and the laptop keeps running with the lid closed;
- *              closing the lid still locks it (ekatva watches the lid)
+ *              Akhaṇḍa, and the laptop keeps running, unlocked, with the lid
+ *              closed, so it can be reached from anywhere through ekatva
  *
  * ("on" and "high" are the wire's names, from before the levels had theirs.)
  *
- * Mechanism: a logind inhibitor held by a child process (`systemd-inhibit
- * … sleep infinity`), for idle and sleep, plus the lid switch at "high".
+ * Mechanism: a logind inhibitor (`systemd-inhibit … sleep infinity`), for
+ * idle and sleep, plus the lid switch at "high", held by a systemd user unit
+ * of its own (ekatva-jyoti-on / ekatva-jyoti-high), not by a child of the
+ * daemon: stopping, restarting or crashing ekatva must not let it go
+ * (2026-11-28: a restart at night, lid closed, let logind suspend the
+ * laptop at once). A restarted daemon adopts the unit it finds running; a
+ * change of level starts the new unit before stopping the old one, so the
+ * lid switch is never free in between. Only turning jyoti off stops it.
  * Holding the lid switch needs no root for the active session. On Vayu the
  * screen's idle timeouts come from the swayidle user service, which no
  * inhibitor reaches; so, as Vayu's own jyoti toggle does, "on" stops it
@@ -20,49 +26,40 @@
  * quick settings in step. Either way the state is remembered across
  * restarts, and an optional timer turns it off.
  *
- * Safety: Nandādīpa drops to Akhaṇḍa when the battery is low and
- * discharging, so a closed laptop in a bag can still sleep before it dies.
+ * A level stays until the user changes it (2026-11-28: Jyoti is manual).
+ * Nothing switches it by itself: no drop from Nandādīpa on a low battery
+ * (that used to happen at 10%); only a timer the user asked for ends it.
+ *
+ * Nandādīpa never locks the screen (2026-11-28: it used to lock when the
+ * lid closed, and the user wants the laptop as they left it).
  *
  * Asked to sleep while it's lit, the laptop sleeps anyway (whileAsleep):
  * the block is let go for that one sleep and taken back, so it's lit again
  * when the laptop wakes.
  */
-import { type ChildProcess, execFile, spawn } from "node:child_process";
+import { type ChildProcess, execFile, execFileSync, spawn } from "node:child_process";
 import { existsSync, readFileSync } from "node:fs";
 import { mkdir, readFile, rm, writeFile } from "node:fs/promises";
 import { dirname, join } from "node:path";
 import type { Done, Jyoti, JyotiLevel } from "@ekatva/protocol";
 import { home } from "../paths.js";
-import { LineChild } from "./lineChild.js";
-import { lockScreen } from "./system.js";
 
-/**
- * logind's LidClosed and UPower's battery both send PropertiesChanged on the
- * system bus; dbus-monitor (falling back to a plain match, no root needed)
- * prints one line per signal, so ekatva wakes only when one of them moves.
- */
-export const POWER_WATCH_ARGS = [
-  "--system",
-  "type='signal',sender='org.freedesktop.login1',path='/org/freedesktop/login1',interface='org.freedesktop.DBus.Properties',member='PropertiesChanged'",
-  "type='signal',sender='org.freedesktop.UPower',path='/org/freedesktop/UPower/devices/DisplayDevice',interface='org.freedesktop.DBus.Properties',member='PropertiesChanged'",
-];
+/** The units that hold the block, one per level. */
+export const HOLD_UNITS = ["ekatva-jyoti-on.service", "ekatva-jyoti-high.service"];
 
 export interface Host {
   /** Runs a command; resolves with its exit code and output. */
   run(cmd: string, args: string[]): Promise<{ code: number; out: string }>;
-  /** Starts a long-lived holder process. */
-  hold(cmd: string, args: string[]): Holder;
-  /** Locks the screen (and checks it did). */
-  lock(): Promise<void>;
+  /**
+   * Starts a long-lived holder process, as the systemd user unit `unit`
+   * when given (outliving the daemon; adopted when it's already running).
+   */
+  hold(cmd: string, args: string[], unit?: string): Holder;
   /** Is the lid closed? null when there's no lid. */
   lidClosed(): boolean | null;
-  /** Battery percent and whether it's discharging, or null. */
-  battery(): { percent: number; discharging: boolean } | null;
-  /**
-   * Calls onChange when the lid or the battery may have changed (and once
-   * on each start), so they're read only then; calls onDown when it can't
-   * watch (and the lid is polled instead). Without it, the lid is polled.
-   */
+  /** Not used by jyoti since 2026-11-28 (no lock on the lid, no battery drop). */
+  lock?(): Promise<void>;
+  battery?(): { percent: number; discharging: boolean } | null;
   watchPower?(onChange: () => void, onDown: () => void): { stop(): void };
   now(): number;
 }
@@ -85,7 +82,53 @@ export const realHost: Host = {
         resolve({ code, out: String(stdout ?? "") });
       });
     }),
-  hold(cmd, args) {
+  hold(cmd, args, unit) {
+    if (unit) {
+      const sc = (...a: string[]) => {
+        try {
+          execFileSync("systemctl", ["--user", ...a], { stdio: "ignore", timeout: 10_000 });
+          return true;
+        } catch {
+          return false;
+        }
+      };
+      const name = unit.replace(/\.service$/, "");
+      // A unit left by a failed one, so the name is free; a running one is adopted.
+      if (!sc("is-active", "--quiet", unit)) sc("reset-failed", unit);
+      if (
+        sc("is-active", "--quiet", unit) ||
+        (() => {
+          try {
+            execFileSync(
+              "systemd-run",
+              [
+                "--user",
+                `--unit=${name}`,
+                "--collect",
+                "--quiet",
+                "-p",
+                `Description=${name}`,
+                cmd,
+                ...args,
+              ],
+              { stdio: "ignore", timeout: 10_000 },
+            );
+            return true;
+          } catch {
+            return false;
+          }
+        })()
+      ) {
+        return {
+          stop: () =>
+            new Promise<void>((resolve) => {
+              execFile("systemctl", ["--user", "stop", unit], { timeout: 10_000 }, () => resolve());
+            }),
+          onExit: () => undefined,
+        };
+      }
+      // No user systemd to run it: a child of ours, as before.
+    }
     const child: ChildProcess = spawn(cmd, args, { stdio: "ignore" });
     child.on("error", () => undefined);
     let gone = false;
@@ -103,7 +146,6 @@ export const realHost: Host = {
       onExit: (cb) => child.on("exit", cb),
     };
   },
-  lock: lockScreen,
   lidClosed() {
     for (const dir of ["LID", "LID0", "LID1"]) {
       try {
@@ -114,39 +156,8 @@ export const realHost: Host = {
     }
     return null;
   },
-  battery() {
-    try {
-      for (const name of ["BAT0", "BAT1", "BAT"]) {
-        const d = `/sys/class/power_supply/${name}`;
-        if (!existsSync(d)) continue;
-        return {
-          percent: Number(readFileSync(`${d}/capacity`, "utf8")),
-          discharging: readFileSync(`${d}/status`, "utf8").trim() === "Discharging",
-        };
-      }
-    } catch {
-      // no battery
-    }
-    return null;
-  },
-  watchPower(onChange, onDown) {
-    const child = new LineChild({
-      cmd: "dbus-monitor",
-      args: POWER_WATCH_ARGS,
-      onLine: (line) => {
-        if (line.includes("member=PropertiesChanged")) onChange();
-      },
-      // A change while it was (re)starting isn't missed.
-      onStart: () => onChange(),
-      onDown: () => onDown(),
-    });
-    child.start();
-    return { stop: () => child.stop() };
-  },
   now: () => Date.now(),
 };
-
-const LOW_BATTERY = 10;
 
 export class JyotiService {
   private level: JyotiLevel = "off";
@@ -154,12 +165,9 @@ export class JyotiService {
   private until: number | null = null;
   private holder: Holder | null = null;
   private timer: ReturnType<typeof setTimeout> | null = null;
-  private lidTimer: ReturnType<typeof setInterval> | null = null;
-  private powerWatch: { stop(): void } | null = null;
-  private lidWasClosed = false;
   private stoppedSwayidle = false;
   private listeners = new Set<(c: Jyoti) => void>();
-  /** Called when jyoti changes by itself (timer, low battery), for the journal. */
+  /** Called when jyoti changes by itself (only a timer the user set), for the journal. */
   onAuto: (summary: string, from: JyotiLevel) => void = () => undefined;
 
   constructor(
@@ -271,15 +279,20 @@ export class JyotiService {
   }
 
   private holdFor(level: JyotiLevel): Holder {
+    const unit = level === "high" ? "ekatva-jyoti-high.service" : "ekatva-jyoti-on.service";
     const what = level === "high" ? "idle:sleep:handle-lid-switch" : "idle:sleep";
-    return this.host.hold("systemd-inhibit", [
-      `--what=${what}`,
-      "--who=ekatva",
-      `--why=${level === "high" ? "Jyoti Nandādīpa: running with the lid closed" : "Jyoti Akhaṇḍa"}`,
-      "--mode=block",
-      "sleep",
-      "infinity",
-    ]);
+    return this.host.hold(
+      "systemd-inhibit",
+      [
+        `--what=${what}`,
+        "--who=ekatva",
+        `--why=${level === "high" ? "Jyoti Nandādīpa: running with the lid closed" : "Jyoti Akhaṇḍa"}`,
+        "--mode=block",
+        "sleep",
+        "infinity",
+      ],
+      unit,
+    );
   }
 
   private async apply(
@@ -287,19 +300,26 @@ export class JyotiService {
     minutes: number | null,
     since: number | null,
   ): Promise<void> {
-    await this.holder?.stop();
-    this.holder = null;
     if (this.timer) clearTimeout(this.timer);
     this.timer = null;
-    this.unwatchLid();
+    const old = this.holder;
+    this.holder = null;
 
     if (level === "off") {
+      await old?.stop();
+      // Also one left running by an earlier daemon that this one never held.
+      await this.host.run("systemctl", ["--user", "stop", ...HOLD_UNITS]).catch(() => undefined);
       await this.idleBack();
       this.level = "off";
       this.since = null;
       this.until = null;
     } else {
+      // The new block first, then the other level's goes: never a moment
+      // without. The same level again (a restart's restore) adopts its unit.
       this.holder = this.holdFor(level);
+      if (old && this.level !== level) await old.stop();
+      const other = HOLD_UNITS[level === "high" ? 0 : 1] as string;
+      await this.host.run("systemctl", ["--user", "stop", other]).catch(() => undefined);
       await this.idleAway(level);
       this.level = level;
       this.since = since ?? this.host.now();
@@ -312,49 +332,11 @@ export class JyotiService {
           );
         }, this.until - this.host.now());
       }
-      if (level === "high") this.watchLid();
     }
     await this.save();
     const now = await this.get();
     for (const cb of this.listeners) cb(now);
     await this.host.run(join(home(), ".local/bin/waybar-signal"), ["12"]).catch(() => undefined);
-  }
-
-  /**
-   * At "high": lock when the lid closes; drop to "on" when the battery runs
-   * low. Told by logind and UPower when either changes; polled every 2 s
-   * only when that can't be watched.
-   */
-  private watchLid(): void {
-    this.lidWasClosed = this.host.lidClosed() === true;
-    const check = () => {
-      if (this.level !== "high") return;
-      const closed = this.host.lidClosed() === true;
-      if (closed && !this.lidWasClosed) void this.host.lock().catch(() => undefined);
-      this.lidWasClosed = closed;
-      const b = this.host.battery();
-      if (b?.discharging && b.percent <= LOW_BATTERY) {
-        void this.apply(
-          "on",
-          this.until ? Math.ceil((this.until - this.host.now()) / 60_000) : null,
-          this.since,
-        ).then(() =>
-          this.onAuto(`Jyoti dropped from Nandādīpa to Akhaṇḍa: battery at ${b.percent}%`, "high"),
-        );
-      }
-    };
-    const poll = () => {
-      if (!this.lidTimer) this.lidTimer = setInterval(check, 2000);
-    };
-    if (this.host.watchPower) this.powerWatch = this.host.watchPower(check, poll);
-    else poll();
-  }
-
-  private unwatchLid(): void {
-    this.powerWatch?.stop();
-    this.powerWatch = null;
-    if (this.lidTimer) clearInterval(this.lidTimer);
-    this.lidTimer = null;
   }
 
   /**
@@ -398,10 +380,11 @@ export class JyotiService {
     );
   }
 
-  /** On daemon exit: release the inhibitor (logind would anyway when the holder dies). */
+  /**
+   * On daemon exit: the block stays (its own unit), so the laptop stays as
+   * the user set it while ekatva is away; the next daemon adopts it.
+   */
   shutdown(): void {
-    this.holder?.stop();
     if (this.timer) clearTimeout(this.timer);
-    this.unwatchLid();
   }
 }

@@ -6,6 +6,9 @@
     "test": { "dependsOn": ["^build"] },
     "dev": { "cache": false, "persistent": true },
     "@ekatva/daemon-rs#build": { "dependsOn": ["@ekatva/daemon#build"], "cache": false },
-    "@ekatva/daemon-rs#test": { "cache": false }
+    "@ekatva/daemon-rs#test": { "cache": false },
+    "@ekatva/link-rs#build": { "cache": false },
+    "@ekatva/link-rs#test": { "cache": false },
+    "@ekatva/daemon#test": { "dependsOn": ["^build", "@ekatva/link-rs#build"] }
   }
 }

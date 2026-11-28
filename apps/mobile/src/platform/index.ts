@@ -283,6 +283,9 @@ const box: SecretBox | undefined = native
     }
   : undefined;
 
+/** The same box, for the laptop passwords Unlock keeps (core/vault.ts LaptopPasswords). */
+export const vaultBox = box;
+
 /** Where files from the laptop go: Download/ekatva when all files are allowed, else the app's folder. */
 async function shareDir(): Promise<string> {
   const [root] = await roots();

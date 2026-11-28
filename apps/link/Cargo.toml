@@ -1,0 +1,42 @@
+# ekatva-link: the part of ekatva that is always there (a system service, user
+# `ekatva`, from boot): the identity, paired phones, the encrypted link, and the
+# few things it answers before anyone logs in. docs/plans/link-and-session.md.
+[workspace]
+members = ["."]
+resolver = "3"
+
+[package]
+name = "ekatva-link"
+version = "0.2.0"
+edition = "2024"
+license = "MIT"
+description = "ekatva's always-on link: Noise XX for paired phones, spliced to the user's session"
+publish = false
+
+[[bin]]
+name = "ekatva-link"
+path = "src/main.rs"
+
+[[bin]]
+name = "ekatva-greeter"
+path = "src/bin/greeter.rs"
+
+[dependencies]
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+snow = { version = "0.9", default-features = false, features = ["default-resolver"] }
+base64 = "0.22"
+sha1 = "0.10"
+x25519-dalek = { version = "2", features = ["static_secrets"] }
+blake2 = "0.10"
+chacha20poly1305 = "0.10"
+getrandom = "0.2"
+libc = "0.2"
+ureq = { version = "2", default-features = false, features = ["tls"] }
+
+[profile.release]
+opt-level = "z"
+lto = true
+codegen-units = 1
+strip = true
+panic = "abort"

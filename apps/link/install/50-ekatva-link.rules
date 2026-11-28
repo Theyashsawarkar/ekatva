@@ -1,0 +1,12 @@
+// ekatva-link may restart or power off the laptop when a paired phone with
+// the `power` grant asks (from the login screen too). Nothing else.
+polkit.addRule(function (action, subject) {
+  if (subject.user !== "ekatva") return polkit.Result.NOT_HANDLED;
+  var allowed = [
+    "org.freedesktop.login1.reboot",
+    "org.freedesktop.login1.reboot-multiple-sessions",
+    "org.freedesktop.login1.power-off",
+    "org.freedesktop.login1.power-off-multiple-sessions",
+  ];
+  return allowed.indexOf(action.id) >= 0 ? polkit.Result.YES : polkit.Result.NOT_HANDLED;
+});

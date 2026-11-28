@@ -20,6 +20,8 @@ import WebSocket from "ws";
 import { loadConfig } from "./config.js";
 import { Daemon, VERSION } from "./daemon.js";
 import { loadIdentity } from "./identity.js";
+import { LINK_SOCKET, LINK_UNIT } from "./link.js";
+import { LINK_APP, stageLink } from "./linkStage.js";
 import { activatedFd, forgetActivation } from "./mcpSocket.js";
 import { dirs, mcpSocketPath, socketPath } from "./paths.js";
 import { callFor } from "./services/calls.js";
@@ -61,6 +63,8 @@ const HELP = `ekatva ${VERSION}: your phone and your laptop as one device
   ekatva tunnel named HOST [NAME] your Cloudflare tunnel NAME (default ekatva) at HOST, now
   ekatva tunnel quick|none        a free quick tunnel, or none (now)
   ekatva window [PLACE]           open the window: overview, messages, calls, files, log, devices, pair, apps
+  ekatva link stage [DIR]         gather what installing ekatva-link needs (then install.sh as root):
+                                  the link keeps the phones reachable before anyone logs in
   ekatva daemon                   run the service (systemd does this)
   ekatva mcp                      an MCP server on stdio, for AI agents (EKATVA_AGENT=name; through pranali when installed)
 
@@ -358,6 +362,9 @@ async function main(argv: string[]): Promise<void> {
       ...(mcpFd !== null ? { mcpListenFd: mcpFd } : {}),
       notify,
       keepTunnel: config.tunnel.mode === "always",
+      // Installed (ekatva link install): the link holds the phones, this attaches
+      // (waiting for it if it isn't up yet: never listening in its place).
+      ...(existsSync(LINK_UNIT) ? { link: LINK_SOCKET } : {}),
     });
     await d.start();
     console.error(`identity in the ${where}`);
@@ -370,6 +377,16 @@ async function main(argv: string[]): Promise<void> {
     };
     process.on("SIGTERM", stop);
     process.on("SIGINT", stop);
+    return;
+  }
+
+  if (cmd === "link" && rest[0] === "stage") {
+    const dir = rest[1] ?? join(dirs.state(), "link-stage");
+    const notes = await stageLink(dir, loadConfig(), dirs.state(), (m) => console.error(m));
+    for (const n of notes) process.stdout.write(`${n}\n`);
+    process.stdout.write(
+      `staged in ${dir}\nnow, as root: sh ${join(LINK_APP, "install/install.sh")} ${dir}\nthen: systemctl --user restart ekatva\n`,
+    );
     return;
   }
 

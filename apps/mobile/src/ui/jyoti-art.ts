@@ -91,3 +91,57 @@ export function glyph(): string {
     `<title>Jyoti</title><path d="${OUTER} ${CORE}" fill="currentColor" fill-rule="evenodd"/>`,
   );
 }
+
+/* ------------------------------------------------------------------ the diya
+   The bar's own lamp (dotfiles waybar jyoti-diya-*.svg, a 24-unit drawing):
+   an outline flame in sky for Akhaṇḍa, a filled one in kesari for Nandādīpa,
+   and, for Śānta (the bar shows nothing), the lamp unlit, its flame dashed. */
+const DIYA_FLAME = "M12 3s4 3.6 4 7.2a4 4 0 0 1-8 0C8 6.6 12 3 12 3z";
+const DIYA_BOWL = "M5 17h14l-2 4H7l-2-4z";
+/** The diya's colours, the bar's: lilac at rest, sky Akhaṇḍa, kesari Nandādīpa. */
+export const DIYA_COLOR: Record<Level, string> = { off: "#a99fb8", on: "#8fd6ec", high: "#f7b07d" };
+const DIYA_RGB: Record<Level, string> = {
+  off: "169,159,184",
+  on: "143,214,236",
+  high: "247,176,125",
+};
+
+/** The diya alone, on its 24-unit grid, `scale`d and moved to (x, y). */
+function diya(level: Level, x: number, y: number, scale: number): string {
+  const c = level === "off" ? "#ece4f5" : DIYA_COLOR[level];
+  const fill = level === "high" ? c : "none";
+  const flameAttrs = level === "off" ? ' stroke-dasharray="2 2.4" stroke-opacity="0.55"' : "";
+  const bowlAttrs = level === "off" ? ' stroke-opacity="0.55"' : "";
+  return (
+    `<g transform="translate(${x} ${y}) scale(${scale})" fill="none" stroke="${c}" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round">` +
+    `<path d="${DIYA_FLAME}" fill="${fill}"${flameAttrs}/><path d="${DIYA_BOWL}"${bowlAttrs}/></g>`
+  );
+}
+
+/**
+ * The mandala (2026-11-28, the user's pick from
+ * ~/Documents/mockups/ekatva-jyoti-cards-3.html): the diya ringed by fine
+ * petals, up to three rings lit in its colour: none for Śānta (faint), two for
+ * Akhaṇḍa, three for Nandādīpa. 200 × 200, the lamp at the centre; the phone's
+ * tile and Darpaṇa's card hang it off their top right corner.
+ */
+export function mandala(level: Level): string {
+  const lit = { off: 0, on: 2, high: 3 }[level];
+  const petals: string[] = [];
+  for (let ring = 0; ring < 3; ring++) {
+    const r = 34 + ring * 18;
+    const n = 12 + ring * 6;
+    const on = ring < lit;
+    const color = on ? `rgb(${DIYA_RGB[level]})` : "#ffffff";
+    const opacity = on ? 0.5 - ring * 0.12 : 0.07;
+    for (let k = 0; k < n; k++) {
+      const a = (2 * Math.PI * k) / n;
+      const p = (d: number) =>
+        `${(100 + d * Math.cos(a)).toFixed(1)} ${(100 + d * Math.sin(a)).toFixed(1)}`;
+      petals.push(
+        `<path d="M${p(r - 8)}L${p(r)}" stroke="${color}" stroke-opacity="${opacity.toFixed(2)}" stroke-width="1.6" stroke-linecap="round"/>`,
+      );
+    }
+  }
+  return svg(title(level) + petals.join("") + diya(level, 77, 73, 46 / 24));
+}

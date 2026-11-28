@@ -1,0 +1,38 @@
+# ekatva's named Cloudflare tunnel, from boot: the laptop is reachable from
+# anywhere even before anyone logs in. It forwards to ekatva-link on 47100.
+# Only the tunnel's own credentials file is here (not the account's cert.pem).
+[Unit]
+Description=ekatva's tunnel: reach this laptop from anywhere, before and after login
+After=network-online.target ekatva-link.service
+Wants=network-online.target
+ConditionPathExists=/var/lib/ekatva/tunnel/credentials.json
+
+[Service]
+Type=simple
+User=ekatva
+Group=ekatva
+EnvironmentFile=/var/lib/ekatva/tunnel/env
+# --protocol http2: QUIC keeps the CPU awake ~44 times a second per edge
+# connection with nothing flowing; HTTP/2 idles at ~2.
+ExecStart=/usr/bin/cloudflared tunnel --no-autoupdate --protocol http2 --url http://127.0.0.1:47100 run --credentials-file /var/lib/ekatva/tunnel/credentials.json ${TUNNEL_ID}
+StateDirectory=ekatva
+Restart=always
+RestartSec=5
+
+NoNewPrivileges=yes
+ProtectSystem=strict
+ProtectHome=yes
+PrivateTmp=yes
+PrivateDevices=yes
+ProtectKernelTunables=yes
+ProtectKernelModules=yes
+ProtectControlGroups=yes
+RestrictNamespaces=yes
+RestrictSUIDSGID=yes
+LockPersonality=yes
+CapabilityBoundingSet=
+RestrictAddressFamilies=AF_INET AF_INET6 AF_UNIX AF_NETLINK
+SystemCallArchitectures=native
+
+[Install]
+WantedBy=multi-user.target

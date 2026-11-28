@@ -6,6 +6,7 @@
  *   node apps/mobile/scripts/jyoti-art.mjs [out-dir]    default: apps/mobile/assets/jyoti
  *
  *   flame-<name>.svg       the full flame, 200 × 200 (any size from ~40 px)
+ *   mandala-<name>.svg     the diya in its rings of petals, 200 × 200 (Darpaṇa's Jyoti card)
  *   small-<name>.svg       two layers, no sparks: exactly 18 px (the bar)
  *   small-<name>@2.svg     the same at 36 px, for a 2× screen
  *   glyph.svg              one colour (currentColor), for kendra
@@ -15,7 +16,7 @@
 import { mkdirSync, rmSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
-import { flame, glyph, small } from "../src/ui/jyoti-art.ts";
+import { flame, glyph, mandala, small } from "../src/ui/jyoti-art.ts";
 
 const here = dirname(fileURLToPath(import.meta.url));
 const out = process.argv[2] ?? join(here, "..", "assets", "jyoti");
@@ -24,6 +25,7 @@ mkdirSync(out, { recursive: true });
 const NAMES = { off: "shanta", on: "akhanda", high: "nandadipa" };
 for (const [level, name] of Object.entries(NAMES)) {
   writeFileSync(join(out, `flame-${name}.svg`), `${flame(level)}\n`);
+  writeFileSync(join(out, `mandala-${name}.svg`), `${mandala(level)}\n`);
   writeFileSync(join(out, `small-${name}.svg`), `${small(level, 18)}\n`);
   writeFileSync(join(out, `small-${name}@2.svg`), `${small(level, 36)}\n`);
 }

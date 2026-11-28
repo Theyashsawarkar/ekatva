@@ -92,6 +92,12 @@ export const CAPABILITIES = {
     title: "Approve root",
     detail: "dvarapala and polkit prompts, with your password typed on the phone",
   },
+  unlock: {
+    side: "laptop",
+    risk: "critical",
+    title: "Unlock the laptop",
+    detail: "your laptop password, typed into the lock screen from the phone",
+  },
   apps: {
     side: "laptop",
     risk: "medium",
@@ -198,7 +204,7 @@ export function grantable(list: readonly string[]): (Capability | AppGrant)[] {
 
 export const PRESETS = {
   everything: ALL,
-  "everything-but-root": ALL.filter((c) => c !== "root" && c !== "files.private"),
+  "everything-but-root": ALL.filter((c) => c !== "root" && c !== "files.private" && c !== "unlock"),
   "media-and-notifications": [
     "status",
     "media",

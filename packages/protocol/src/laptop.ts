@@ -412,6 +412,11 @@ export interface LaptopServices {
   };
   power: {
     lock(): Promise<Done<null>>;
+    /**
+     * Types the password into the lock screen; PAM decides. Never logged.
+     * `was`: whether it was locked (an unlock of an unlocked laptop does nothing).
+     */
+    unlock(password: string): Promise<Done<{ was: "locked" | "unlocked" }>>;
     suspend(): Promise<Done<null>>;
   };
   agents: {
@@ -904,6 +909,10 @@ const power = api.router({
   suspend: p
     .meta({ cap: "power" })
     .mutation(async ({ ctx }) => done(ctx, await ctx.services.power.suspend())),
+  unlock: p
+    .meta({ cap: "unlock" })
+    .input(z.object({ password: z.string().min(1).max(1024) }))
+    .mutation(async ({ ctx, input }) => done(ctx, await ctx.services.power.unlock(input.password))),
 });
 
 const Which = z.string().max(200).nullable().default(null);

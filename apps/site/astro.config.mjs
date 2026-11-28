@@ -29,6 +29,8 @@ export default defineConfig({
             "features/media",
             "features/phone",
             "features/root",
+            "features/unlock",
+            "features/link",
             "features/action-log",
           ],
         },

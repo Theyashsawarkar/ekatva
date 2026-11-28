@@ -22,6 +22,12 @@ export const CONTROL = 0;
 export const PORT_LAPTOP = 1;
 /** The phone's API: the laptop is the client. */
 export const PORT_PHONE = 2;
+/**
+ * ekatva-link's own requests (status, login, reboot, power off): answered by
+ * the always-on link, even before anyone logs in. JSON `{id, m, p}` →
+ * `{id, ok, v}` or `{id, ok: false, e, code}` (apps/link/src/api.rs).
+ */
+export const PORT_LINK = 3;
 
 const HEADER = 2;
 const TAG = 16;
@@ -103,8 +109,27 @@ export class LinkError extends Error {
 
 type Listener<T> = (v: T) => void;
 
+/**
+ * What the laptop's side needs of a link, whoever holds its keys: the
+ * Channel below (Noise here, in this process), or the session daemon's
+ * spliced channel (ekatva-link holds the Noise session and passes the
+ * ports, decrypted, over a local socket).
+ */
+export interface PortChannel {
+  readonly remoteStatic: Uint8Array;
+  readonly peer: Hello;
+  readonly isOpen: boolean;
+  send(port: number, data: Uint8Array): void;
+  sendText(port: number, text: string): void;
+  onPort(port: number, cb: (data: Uint8Array) => void): () => void;
+  control(msg: Record<string, unknown>): void;
+  onControl(cb: (msg: Record<string, unknown>) => void): () => void;
+  onClose(cb: (reason: string) => void): () => void;
+  close(reason?: string, code?: number): void;
+}
+
 /** One end of an open link. */
-export class Channel {
+export class Channel implements PortChannel {
   private ports = new Map<number, Set<Listener<Uint8Array>>>();
   private partial = new Map<number, Uint8Array[]>();
   private partialSize = new Map<number, number>();

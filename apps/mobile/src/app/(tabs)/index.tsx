@@ -9,6 +9,7 @@ import { useEffect, useState } from "react";
 import { View } from "react-native";
 import { sameMedia } from "../../core/equal";
 import { agentRoute } from "../../ui/agents/route";
+import { AtLoginScreen } from "../../ui/at-login-screen";
 import { errorText } from "../../ui/errors";
 import { AppearanceTile } from "../../ui/home/appearance-tile";
 import { DeviceTile } from "../../ui/home/device-tile";
@@ -36,12 +37,26 @@ const clock = (ms: number) => {
   return `${Math.floor(s / 60)}:${String(s % 60).padStart(2, "0")}`;
 };
 
+/** Home: the laptop's, or the login screen's when nobody is logged in on it. */
 export default function Home() {
+  const link = useLink();
+  if (link.status === "online" && link.session === false) return <AtLoginScreen />;
+  return <LaptopHome />;
+}
+
+function LaptopHome() {
   const { session, alerts, dismissAlert, confirm } = useApp();
   const link = useLink();
   const laptop = useLaptop();
   const client = link.status === "online" ? session?.link.client : null;
   const status = usePoll(() => client?.status.query() ?? null, [client], 3000, { key: "status" });
+  // The lock tile follows what was just done until the laptop's next status says so too.
+  const [lockGuess, setLockGuess] = useState<boolean | null>(null);
+  const [locking, setLocking] = useState(false);
+  const statusLocked = status.data?.locked ?? null;
+  // biome-ignore lint/correctness/useExhaustiveDependencies: a new answer from the laptop replaces the guess
+  useEffect(() => setLockGuess(null), [statusLocked]);
+  const isLocked = lockGuess ?? statusLocked ?? false;
   // Pushed by the laptop as they change (one shared subscription each), polled only as a safety net.
   const jyoti = useWatch(
     "jyoti",
@@ -297,16 +312,35 @@ export default function Home() {
         small={[
           { icon: "clip", label: "Clipboard", onPress: () => router.push("/clipboard") },
           { icon: "send", label: "Send", onPress: () => router.push("/send"), disabled: !client },
-          {
-            icon: "lock",
-            label: "Lock",
-            disabled: !client,
-            onPress: () =>
-              void client?.power.lock.mutate().then(
-                () => toast(`Locked ${name}`),
-                (e: unknown) => toast(errorText(e)),
-              ),
-          },
+          isLocked
+            ? {
+                icon: "lock",
+                label: "Unlock",
+                color: k.amber,
+                disabled: !client,
+                onPress: () => router.push("/laptop-unlock"),
+              }
+            : {
+                icon: "lock",
+                label: locking ? "Locking…" : "Lock",
+                disabled: !client || locking,
+                onPress: () => {
+                  if (!client || locking) return;
+                  setLocking(true);
+                  void client.power.lock
+                    .mutate()
+                    .then(
+                      () => {
+                        // Shown at once; the next status agrees.
+                        setLockGuess(true);
+                        toast(`Locked ${name}`);
+                        status.reload();
+                      },
+                      (e: unknown) => toast(errorText(e)),
+                    )
+                    .finally(() => setLocking(false));
+                },
+              },
           {
             icon: "moon",
             label: "Sleep",
